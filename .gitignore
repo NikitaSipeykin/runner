@@ -48,6 +48,7 @@ build/
 /jre-minimal/
 /.idea/
 /logs
+/.dist
 
 ### Properties ###
 application-secret.properties

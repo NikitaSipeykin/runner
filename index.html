@@ -1,45 +1,54 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Runner</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body {
-      width: 100%; height: 100%;
-      background: #222;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      overflow: hidden;
-      touch-action: none;
-    }
-    #pixi-container {
-      width: 390px;
-      height: 844px;
-    }
-    #pixi-container canvas {
-      width: 100% !important;
-      height: 100% !important;
-      display: block !important;
-    }
-    @media (max-height: 844px) {
-      #pixi-container {
-        height: 100vh;
-        width: calc(100vh * 390 / 844);
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>Runner</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
       }
-    }
-    @media (max-width: 390px) {
-      #pixi-container {
-        width: 100vw;
-        height: calc(100vw * 844 / 390);
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        background: #222;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        overflow: hidden;
+        touch-action: none;
       }
-    }
-  </style>
-</head>
-<body>
-  <div id="pixi-container"></div>
-  <script type="module" src="/src/main.ts"></script>
-</body>
+      #pixi-container {
+        width: 390px;
+        height: 844px;
+      }
+      #pixi-container canvas {
+        width: 100% !important;
+        height: 100% !important;
+        display: block !important;
+      }
+      @media (max-height: 844px) {
+        #pixi-container {
+          height: 100vh;
+          width: calc(100vh * 390 / 844);
+        }
+      }
+      @media (max-width: 390px) {
+        #pixi-container {
+          width: 100vw;
+          height: calc(100vw * 844 / 390);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="pixi-container"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
 </html>
