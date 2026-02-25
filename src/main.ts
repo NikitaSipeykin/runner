@@ -4,23 +4,29 @@ import {
 } from "pixi.js";
 
 // ═══════════════════════════════════════════════════════════
-// CONFIG — меняй здесь
+// LAYOUT — все позиции здесь
 // ═══════════════════════════════════════════════════════════
 const W = 390;
 const H = 844;
 
-// Уровень земли для персонажа и препятствий
-const CHAR_Y = 610;
+// Земля персонажа и врагов (нижний край спрайта anchor=1)
+const CHAR_Y  = 760;
 
-// Декор — каждый элемент независимо (anchor bottom = y)
-const DECO = {
-  bgthree:  { y: 480, scale: 1.00, spd: 1.3, count: 4 },
-  bgthree1: { y: 495, scale: 0.90, spd: 1.5, count: 3 },
-  bush:     { y: 570, scale: 0.55, spd: 2.0, count: 5 },
-  bush1:    { y: 565, scale: 0.50, spd: 2.2, count: 4 },
-  bush2:    { y: 572, scale: 0.58, spd: 2.0, count: 3 },
-  lantern:  { y: 580, scale: 0.65, spd: 2.6, count: 3 },
-};
+// Трава — полоса поверх фона
+const GRASS_Y     = 720; // верх травяной полосы
+const GRASS_COLOR = 0x4a7c3f;
+const GRASS_H     = H - GRASS_Y; // высота полосы до низа экрана
+
+// Горизонтальные позиции X
+const PLAYER_X    = 85;  // X игрока
+const OBS_SPAWN_X = W + 60; // X спавна препятствий
+
+// Параллакс фон: 3 слоя 320×180
+const BG_LAYERS = [
+  { key: "bg1", spd: 0.4 },
+  { key: "bg2", spd: 0.9 },
+  { key: "bg3", spd: 1.6 },
+];
 
 // ═══════════════════════════════════════════════════════════
 // CONSTANTS
@@ -46,9 +52,16 @@ const ROW_DEATH1 = 5; // смерть часть 1
 const ROW_DEATH2 = 6; // смерть часть 2
 
 // Enemy: 1682×1771, 9 cols × 5 rows → frame 186×354
-const ENEMY_FW    = Math.floor(1682 / 9);
-const ENEMY_FH    = Math.floor(1771 / 5);
-const ENEMY_SCALE = 0.38;
+// Enemy: Run.png 1200×150 (8 cols), Idle.png 600×150 (4 cols) → frame 150×150
+const ENEMY_RUN_COLS  = 8;
+const ENEMY_IDLE_COLS = 4;
+const ENEMY_FW        = 150;
+const ENEMY_FH        = 150;
+// Реальный контент гоблина: rows 64–100 = 37px высотой
+// Чтобы гоблин был ~110px (как игрок): scale = 110/37 ≈ 3.0
+const ENEMY_SCALE     = 3.0;
+// anchor.y = 100/150 = 0.667 ставит реальные ноги точно на CHAR_Y
+const ENEMY_ANCHOR_Y  = 100 / 150; // 0.667
 
 // ═══════════════════════════════════════════════════════════
 // APP
@@ -61,20 +74,16 @@ document.getElementById("pixi-container")!.appendChild(app.canvas);
 // ASSETS
 // ═══════════════════════════════════════════════════════════
 const ASSET_LIST = [
-  { alias: "character", src: "/assets/char_blue.png" },
-  { alias: "enemy",     src: "/assets/enemy.png"     },
-  { alias: "bg",        src: "/assets/bg.png"        },
-  { alias: "bgthree",   src: "/assets/bgthree.png"   },
-  { alias: "bgthree1",  src: "/assets/bgthree1.png"  },
-  { alias: "bush",      src: "/assets/bush.png"      },
-  { alias: "bush1",     src: "/assets/bush1.png"     },
-  { alias: "bush2",     src: "/assets/bush2.png"     },
-  { alias: "lantern",   src: "/assets/lantern.png"   },
-  { alias: "cone",      src: "/assets/cone.webp"     },
-  { alias: "cash",      src: "/assets/cash.png"      },
-  { alias: "fail",      src: "/assets/fail.png"      },
-  { alias: "hand",      src: "/assets/hand.png"      },
-  { alias: "adfooter",  src: "/assets/adfooter.webp" },
+  { alias: "character",  src: "/assets/char_blue.png"          },
+  { alias: "enemy_run",  src: "/assets/Run.png"                },
+  { alias: "enemy_idle", src: "/assets/Idle.png"               },
+  { alias: "bg1",        src: "/assets/background_layer_1.png" },
+  { alias: "bg2",        src: "/assets/background_layer_2.png" },
+  { alias: "bg3",        src: "/assets/background_layer_3.png" },
+  { alias: "coin",       src: "/assets/MonedaD.png"            },
+  { alias: "fail",       src: "/assets/fail.png"               },
+  { alias: "hand",       src: "/assets/hand.png"               },
+  { alias: "adfooter",   src: "/assets/adfooter.webp"          },
 ];
 for (const a of ASSET_LIST) Assets.add(a);
 const T = await Assets.load(ASSET_LIST.map(a => a.alias));
@@ -89,10 +98,30 @@ function charFrames(row: number, count = CHAR_COLS): Texture[] {
   );
 }
 
-function enemyFrames(row = 0, count = 8): Texture[] {
-  const src = T["enemy"].source;
-  return Array.from({ length: count }, (_, i) =>
-    new Texture({ source: src, frame: new Rectangle(i * ENEMY_FW, row * ENEMY_FH, ENEMY_FW, ENEMY_FH) })
+function enemyRunFrames(): Texture[] {
+  const src = T["enemy_run"].source;
+  return Array.from({ length: ENEMY_RUN_COLS }, (_, i) =>
+    new Texture({ source: src, frame: new Rectangle(i * ENEMY_FW, 0, ENEMY_FW, ENEMY_FH) })
+  );
+}
+
+function enemyIdleFrames(): Texture[] {
+  const src = T["enemy_idle"].source;
+  return Array.from({ length: ENEMY_IDLE_COLS }, (_, i) =>
+    new Texture({ source: src, frame: new Rectangle(i * ENEMY_FW, 0, ENEMY_FW, ENEMY_FH) })
+  );
+}
+
+// MonedaD.png: 80×16, 5 cols → frame 16×16
+const COIN_COLS = 5;
+const COIN_FW   = 16;
+const COIN_FH   = 16;
+const COIN_SCALE = 3.5; // 16 * 3.5 = 56px
+
+function coinFrames(): Texture[] {
+  const src = T["coin"].source;
+  return Array.from({ length: COIN_COLS }, (_, i) =>
+    new Texture({ source: src, frame: new Rectangle(i * COIN_FW, 0, COIN_FW, COIN_FH) })
   );
 }
 
@@ -109,53 +138,51 @@ function makeCharAnim(row: number, spd = 0.15): AnimatedSprite {
 // LAYERS
 // ═══════════════════════════════════════════════════════════
 const bgLayer   = new Container();
-const decoLayer = new Container();
 const gameLayer = new Container();
 const fxLayer   = new Container();
 const uiLayer   = new Container();
-app.stage.addChild(bgLayer, decoLayer, gameLayer, fxLayer, uiLayer);
+app.stage.addChild(bgLayer, gameLayer, fxLayer, uiLayer);
 
 // ═══════════════════════════════════════════════════════════
-// BACKGROUND — bg.png на весь экран по высоте
+// PARALLAX BACKGROUND — 3 слоя 320×180, масштаб по высоте H
 // ═══════════════════════════════════════════════════════════
-const BG_SCALE = H / T["bg"].height;
-const BG_W     = Math.round(T["bg"].width * BG_SCALE);
+const BG_SCALE = H / 180;                       // 844/180 ≈ 4.69
+const BG_W     = Math.round(320 * BG_SCALE);    // ~1502px
 
-const bgSprites: Sprite[] = [];
-for (let i = 0; i < 2; i++) {
-  const s = new Sprite(T["bg"]);
-  s.scale.set(BG_SCALE);
-  s.x = i * BG_W; s.y = 0;
-  bgLayer.addChild(s);
-  bgSprites.push(s);
+interface BgLayer { sprites: Sprite[]; spd: number }
+const bgLayers: BgLayer[] = [];
+
+for (const cfg of BG_LAYERS) {
+  const sprites: Sprite[] = [];
+  for (let i = 0; i < 2; i++) {
+    const s = new Sprite(T[cfg.key]);
+    s.scale.set(BG_SCALE);
+    s.x = i * BG_W;
+    s.y = 0;
+    bgLayer.addChild(s);
+    sprites.push(s);
+  }
+  bgLayers.push({ sprites, spd: cfg.spd });
 }
 
-// Дорожная разметка
+// Трава — полоса от GRASS_Y до низа экрана
+const grassStrip = new Graphics()
+  .rect(0, GRASS_Y, W, GRASS_H)
+  .fill(GRASS_COLOR);
+const grassEdge = new Graphics()
+  .rect(0, GRASS_Y, W, 6)
+  .fill(0x3a6b2f);
+bgLayer.addChild(grassStrip, grassEdge);
+
+// Дорожная разметка — на траве
 const roadMarks: Graphics[] = [];
 for (let i = 0; i < 7; i++) {
-  const m = new Graphics().rect(0, 0, 36, 5).fill({ color: 0xffffff, alpha: 0.5 });
-  m.x = i * 68; m.y = CHAR_Y + 5;
+  const m = new Graphics().rect(0, 0, 36, 4).fill({ color: 0xffffff, alpha: 0.25 });
+  m.x = i * 68; m.y = GRASS_Y + 14;
   bgLayer.addChild(m);
   roadMarks.push(m);
 }
 
-// ═══════════════════════════════════════════════════════════
-// DECO
-// ═══════════════════════════════════════════════════════════
-interface DecoItem { spr: Sprite; spd: number }
-const decoItems: DecoItem[] = [];
-
-for (const [key, cfg] of Object.entries(DECO)) {
-  for (let i = 0; i < cfg.count; i++) {
-    const s = new Sprite(T[key]);
-    s.anchor.set(0.5, 1);
-    s.scale.set(cfg.scale);
-    s.x = (W / cfg.count) * i + (W / cfg.count) / 2;
-    s.y = cfg.y;
-    decoLayer.addChild(s);
-    decoItems.push({ spr: s, spd: cfg.spd });
-  }
-}
 
 // Ad banner
 const adSpr = new Sprite(T["adfooter"]);
@@ -184,7 +211,7 @@ let playerAnim = makeCharAnim(ROW_RUN);
 playerCont.addChild(playerAnim);
 
 const pl = {
-  x: 85, y: CHAR_Y,
+  x: PLAYER_X, y: CHAR_Y,
   vy: 0, onGround: true, jumps: 0,
   dead: false, invTimer: 0,
   sliding: false, slideTimer: 0,
@@ -235,10 +262,11 @@ function endSlide() {
 }
 
 function playerHitbox() {
-  const sk = pl.sliding ? 0.52 : 1.0;
-  const ph = CHAR_FH * CHAR_SCALE * sk;
-  const pw = CHAR_FW * CHAR_SCALE * 0.44;
-  return { x: pl.x - pw / 2 + 4, y: pl.y - ph, w: pw - 8, h: ph - 6 };
+  // Реальный контент: ~20x31px в кадре 56x56 → hw=0.37, hh=0.55
+  const sk = pl.sliding ? 0.55 : 1.0;
+  const pw = CHAR_FW * CHAR_SCALE * 0.37;
+  const ph = CHAR_FH * CHAR_SCALE * 0.55 * sk;
+  return { x: pl.x - pw / 2, y: pl.y - ph, w: pw, h: ph };
 }
 
 function updatePlayer(dt: number) {
@@ -305,10 +333,14 @@ function updatePlayer(dt: number) {
 interface Obs { spr: Sprite | AnimatedSprite | null; active: boolean; hw: number; hh: number }
 let obstacles: Obs[] = [];
 
+// hw/hh — доля от размера спрайта, соответствующая реальному контенту
+// Run:  content 25x35 из 150x150 → hw=0.17, hh=0.23
+// Idle: content 22x35 из 150x150 → hw=0.15, hh=0.23
 const obsCfgs = [
-  { key: "cone",  scale: 0.50, hw: 0.55, hh: 0.85 },
-  { key: "cone",  scale: 0.55, hw: 0.55, hh: 0.85 },
-  { key: "enemy", scale: ENEMY_SCALE, hw: 0.42, hh: 0.82 },
+  { key: "idle_obs", hw: 0.15, hh: 0.23 },
+  { key: "idle_obs", hw: 0.15, hh: 0.23 },
+  { key: "enemy",    hw: 0.17, hh: 0.23 },
+  { key: "enemy",    hw: 0.17, hh: 0.23 },
 ];
 
 function spawnObs() {
@@ -316,16 +348,25 @@ function spawnObs() {
   const pool = distance < 40 ? [obsCfgs[0]] : obsCfgs;
   const cfg  = pool[Math.floor(Math.random() * pool.length)];
 
-  let spr: Sprite | AnimatedSprite;
+  let spr: AnimatedSprite;
   if (cfg.key === "enemy") {
-    const a = new AnimatedSprite(enemyFrames(0, 8));
-    a.animationSpeed = 0.14; a.play(); spr = a;
+    spr = new AnimatedSprite(enemyRunFrames());
+    spr.animationSpeed = 0.16;
   } else {
-    spr = new Sprite(T[cfg.key]);
+    // idle_obs — Idle.png развёрнут зеркально по X (смотрит влево на игрока)
+    spr = new AnimatedSprite(enemyIdleFrames());
+    spr.animationSpeed = 0.10;
+    spr.scale.x = -ENEMY_SCALE; // зеркало по X
   }
-  spr.anchor.set(0.5, 1);
-  spr.scale.set(cfg.scale);
-  spr.x = W + (spr.width ?? 60) / 2 + 20;
+  spr.play();
+  spr.anchor.set(0.5, ENEMY_ANCHOR_Y);
+  // scale.x уже установлен выше для idle_obs, для enemy ставим обычный
+  if (cfg.key === "enemy") {
+    spr.scale.set(-ENEMY_SCALE, ENEMY_SCALE); // зеркало — бежит влево на игрока
+  } else {
+    spr.scale.set(-ENEMY_SCALE, ENEMY_SCALE);
+  }
+  spr.x = OBS_SPAWN_X;
   spr.y = CHAR_Y;
   gameLayer.addChild(spr);
   obstacles.push({ spr, active: true, hw: cfg.hw, hh: cfg.hh });
@@ -347,32 +388,35 @@ function updateObs(dt: number) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// COINS
+// COINS — анимированная монета MonedaD.png
 // ═══════════════════════════════════════════════════════════
-interface Coin { spr: Sprite | null; active: boolean; phase: number }
+interface Coin { spr: AnimatedSprite | null; active: boolean; phase: number }
 let coins: Coin[] = [];
 
 function spawnCoin() {
-  const ys = [CHAR_Y - 40, CHAR_Y - 100, CHAR_Y - 165];
-  const s = new Sprite(T["cash"]);
-  s.anchor.set(0.5); s.scale.set(0.11);
-  s.x = W + 30;
-  s.y = ys[Math.floor(Math.random() * ys.length)];
-  gameLayer.addChild(s);
-  coins.push({ spr: s, active: true, phase: Math.random() * Math.PI * 2 });
+  const ys = [CHAR_Y - 50, CHAR_Y - 110, CHAR_Y - 180];
+  const a = new AnimatedSprite(coinFrames());
+  a.animationSpeed = 0.14;
+  a.play();
+  a.anchor.set(0.5);
+  a.scale.set(COIN_SCALE);
+  a.x = W + 30;
+  a.y = ys[Math.floor(Math.random() * ys.length)];
+  gameLayer.addChild(a);
+  coins.push({ spr: a, active: true, phase: Math.random() * Math.PI * 2 });
 }
 
 function updateCoins(dt: number) {
   for (const c of coins) {
     if (!c.spr || !c.active) continue;
     c.spr.x -= speed * dt;
-    c.phase += 0.05 * dt;
-    c.spr.y += Math.sin(c.phase) * 0.4;
-    c.spr.rotation += 0.02 * dt;
+    c.phase += 0.04 * dt;
+    c.spr.y += Math.sin(c.phase) * 0.35; // лёгкое покачивание
   }
   const toRemove = coins.filter(c => !c.active || (c.spr && c.spr.x < -80));
   toRemove.forEach(c => { if (c.spr) { gameLayer.removeChild(c.spr); c.spr.destroy(); c.spr = null; }});
   coins = coins.filter(c => c.spr !== null);
+
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -660,7 +704,7 @@ function startGame() {
   score = 0; distance = 0; lives = 3; speed = BASE_SPD;
   obstTimer = 0; coinTimer = 0;
 
-  pl.x = 85; pl.y = CHAR_Y; pl.vy = 0;
+  pl.x = PLAYER_X; pl.y = CHAR_Y; pl.vy = 0;
   pl.onGround = true; pl.jumps = 0;
   pl.dead = false; pl.invTimer = 0;
   pl.sliding = false; pl.slideTimer = 0;
@@ -720,15 +764,12 @@ app.ticker.add((ticker) => {
     speed     = Math.min(BASE_SPD + Math.floor(distance / 70) * 0.35, 11.5);
   }
 
-  for (const s of bgSprites) {
-    s.x -= 0.8 * dt;
-    if (s.x <= -BG_W) s.x += BG_W * 2;
-  }
-
-  for (const d of decoItems) {
-    d.spr.x -= d.spd * dt;
-    if (d.spr.x < -(d.spr.width ?? 60) / 2)
-      d.spr.x = W + (d.spr.width ?? 60) / 2 + Math.random() * 50;
+  // Параллакс — каждый слой со своей скоростью
+  for (const layer of bgLayers) {
+    for (const s of layer.sprites) {
+      s.x -= layer.spd * dt;
+      if (s.x <= -BG_W) s.x += BG_W * 2;
+    }
   }
 
   for (const m of roadMarks) {
