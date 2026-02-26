@@ -24,75 +24,52 @@ window.addEventListener("error", (e) => {
   </pre>`;
 });
 
-// ═══════════════════════════════════════════════════════════
-// LAYOUT — все позиции здесь
-// ═══════════════════════════════════════════════════════════
-const W = 390;
-const H = 844;
-
-// Земля персонажа и врагов (нижний край спрайта anchor=1)
-const CHAR_Y = 760;
-
-// Трава — полоса поверх фона
-const GRASS_Y = 720; // верх травяной полосы
-const GRASS_COLOR = 0x4a7c3f;
-const GRASS_H = H - GRASS_Y; // высота полосы до низа экрана
-
-// Горизонтальные позиции X
-const PLAYER_X = 85; // X игрока
-const OBS_SPAWN_X = W + 60; // X спавна препятствий
-
-// Параллакс фон: 3 слоя 320×180
-const BG_LAYERS = [
-  { key: "bg1", spd: 0.4 },
-  { key: "bg2", spd: 0.9 },
-  { key: "bg3", spd: 1.6 },
-];
-
-// ═══════════════════════════════════════════════════════════
-// CONSTANTS
-// ═══════════════════════════════════════════════════════════
-const GRAVITY = 0.58;
-const JUMP_V = -15.5;
-const JUMP2_V = -13.0;
-const BASE_SPD = 4.5;
-const WIN_DIST = 500; // метров до финиша
-const ENEMY_ANIM_SPD = 0.07; // смена кадров гоблина (медленнее = плавнее)
-
-// char_blue.png: 448×392, 8 cols × 7 rows → frame 56×56
-const CHAR_FW = 56;
-const CHAR_FH = 56;
-const CHAR_COLS = 8;
-const CHAR_SCALE = 2.2; // 56 * 2.2 ≈ 123px
-
-// Row mapping:
-const ROW_IDLE = 0; // idle (меню / пауза)
-// row 1 = attack — скипаем
-const ROW_RUN = 2; // бег
-const ROW_JUMP = 3; // прыжок (взлёт, vy < 0)
-const ROW_FALL = 4; // падение (vy > 0)
-const ROW_DEATH1 = 5; // смерть часть 1
-const ROW_DEATH2 = 6; // смерть часть 2
-
-// Enemy: 1682×1771, 9 cols × 5 rows → frame 186×354
-// Enemy: Run.png 1200×150 (8 cols), Idle.png 600×150 (4 cols) → frame 150×150
-const ENEMY_RUN_COLS = 8;
-const ENEMY_IDLE_COLS = 4;
-const ENEMY_FW = 150;
-const ENEMY_FH = 150;
-// Реальный контент гоблина: rows 64–100 = 37px высотой
-// Чтобы гоблин был ~110px (как игрок): scale = 110/37 ≈ 3.0
-const ENEMY_SCALE = 3.0;
-// anchor.y = 100/150 = 0.667 ставит реальные ноги точно на CHAR_Y
-const ENEMY_ANCHOR_Y = 100 / 150; // 0.667
-
-// ═══════════════════════════════════════════════════════════
-// MAIN — всё в async функции (top-level await не везде работает)
-// ═══════════════════════════════════════════════════════════
-async function main() {
+(async () => {
   // ═══════════════════════════════════════════════════════════
-  // APP
+  // LAYOUT — все позиции здесь
   // ═══════════════════════════════════════════════════════════
+  const W = 390;
+  const H = 844;
+  const CHAR_Y = 760;
+  const GRASS_Y = 720;
+  const GRASS_COLOR = 0x4a7c3f;
+  const GRASS_H = H - GRASS_Y;
+  const PLAYER_X = 85;
+  const OBS_SPAWN_X = W + 60;
+  const BG_LAYERS = [
+    { key: "bg1", spd: 0.4 },
+    { key: "bg2", spd: 0.9 },
+    { key: "bg3", spd: 1.6 },
+  ];
+
+  // ── PHYSICS / GAME ────────────────────────────────────────
+  const GRAVITY = 0.58;
+  const JUMP_V = -15.5;
+  const JUMP2_V = -13.0;
+  const BASE_SPD = 4.5;
+  const WIN_DIST = 500;
+  const ENEMY_ANIM_SPD = 0.07;
+
+  // ── CHARACTER ─────────────────────────────────────────────
+  const CHAR_FW = 56;
+  const CHAR_FH = 56;
+  const CHAR_COLS = 8;
+  const CHAR_SCALE = 2.2;
+  const ROW_IDLE = 0;
+  const ROW_RUN = 2;
+  const ROW_JUMP = 3;
+  const ROW_FALL = 4;
+  const ROW_DEATH1 = 5;
+  const ROW_DEATH2 = 6;
+
+  // ── ENEMY ─────────────────────────────────────────────────
+  const ENEMY_RUN_COLS = 8;
+  const ENEMY_IDLE_COLS = 4;
+  const ENEMY_FW = 150;
+  const ENEMY_FH = 150;
+  const ENEMY_SCALE = 3.0;
+  const ENEMY_ANCHOR_Y = 100 / 150;
+
   const app = new Application();
   await app.init({
     width: W,
@@ -1397,9 +1374,9 @@ async function main() {
   // INIT
   // ═══════════════════════════════════════════════════════════
   showMenu();
-} // end main()
-
-main().catch((err) => {
+})().catch((err) => {
   console.error("Game failed to start:", err);
-  document.body.innerHTML = `<pre style="color:red;padding:20px;font-size:13px;white-space:pre-wrap;">ОШИБКА ЗАПУСКА:\n${err?.message || err}\n${err?.stack || ""}</pre>`;
+  document.body.innerHTML = `<pre style="color:red;padding:20px;font-size:13px;white-space:pre-wrap;">ОШИБКА:
+${err?.message || err}
+${err?.stack || ""}</pre>`;
 });
