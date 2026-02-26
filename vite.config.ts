@@ -1,15 +1,17 @@
 import { defineConfig } from "vite";
-import { viteSingleFile } from "vite-plugin-singlefile";
 
 export default defineConfig({
-  plugins: [viteSingleFile()],
+  base: "/",
   build: {
     target: "esnext",
-    assetsInlineLimit: 100000000,
-    cssCodeSplit: false,
+    outDir: "dist",
+    assetsInlineLimit: 0,
     rollupOptions: {
       output: {
-        inlineDynamicImports: true,
+        // JS в отдельную папку чтобы не конфликтовать с game assets
+        entryFileNames: "js/[name]-[hash].js",
+        chunkFileNames: "js/[name]-[hash].js",
+        assetFileNames: "js/[name]-[hash].[ext]",
       },
     },
   },

@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "start": "npm run dev",
+    "dev": "vite",
     "build": "npm run lint && tsc && vite build",
-    "lint": "eslint .",
-    "dev": "vite"
+    "preview": "vite preview",
+    "lint": "eslint ."
   },
   "dependencies": {
     "pixi.js": "^8.8.1"
