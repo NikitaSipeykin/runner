@@ -20,36 +20,17 @@
     #pixi-container {
       position: fixed;
       inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
       background: #1a1a2e;
     }
-    /* Pixi ставит inline width/height — масштабируем через transform */
     #pixi-container canvas {
       display: block;
-      transform-origin: center center;
-      /* scale устанавливается JS-ом ниже */
+      width: 100vw;
+      height: 100vh;
     }
   </style>
 </head>
 <body>
   <div id="pixi-container"></div>
   <script type="module" src="/src/main.ts"></script>
-  <script>
-    // Масштабируем canvas под экран сохраняя пропорции 390x844
-    function scaleCanvas() {
-      const canvas = document.querySelector('#pixi-container canvas');
-      if (!canvas) { requestAnimationFrame(scaleCanvas); return; }
-      const scaleX = window.innerWidth  / 390;
-      const scaleY = window.innerHeight / 844;
-      const scale  = Math.min(scaleX, scaleY);
-      canvas.style.transform = `scale(${scale})`;
-    }
-    // Ждём пока Pixi добавит canvas, потом масштабируем
-    const observer = new MutationObserver(scaleCanvas);
-    observer.observe(document.getElementById('pixi-container'), { childList: true });
-    window.addEventListener('resize', scaleCanvas);
-  </script>
 </body>
 </html>

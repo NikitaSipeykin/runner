@@ -11,31 +11,29 @@ import {
   TextStyle,
 } from "pixi.js";
 
-// Глобальный перехват ошибок — показываем их на экране
+// Global error overlay (Playable Ads friendly: no silent failures)
 window.addEventListener("unhandledrejection", (e) => {
   document.body.innerHTML = `<pre style="color:red;padding:20px;font-size:12px;white-space:pre-wrap;">
-ОШИБКА: ${e.reason?.message || e.reason}
+ERROR: ${e.reason?.message || e.reason}
 ${e.reason?.stack || ""}
   </pre>`;
 });
 window.addEventListener("error", (e) => {
   document.body.innerHTML = `<pre style="color:red;padding:20px;font-size:12px;white-space:pre-wrap;">
-ОШИБКА: ${e.message} (${e.filename}:${e.lineno})
+ERROR: ${e.message} (${e.filename}:${e.lineno})
   </pre>`;
 });
 
 (async () => {
   // ═══════════════════════════════════════════════════════════
-  // LAYOUT — все позиции здесь
+  // LAYOUT — all design-space positions live here
   // ═══════════════════════════════════════════════════════════
-  const W = 390;
-  const H = 844;
-  const CHAR_Y = 760;
-  const GRASS_Y = 720;
-  const GRASS_COLOR = 0x4a7c3f;
+  const W = 390; // design width (logical pixels)
+  const H = 844; // design height (logical pixels)
+  const CHAR_Y = 660;
+  const GRASS_Y = 620;
   const GRASS_H = H - GRASS_Y;
   const PLAYER_X = 85;
-  const OBS_SPAWN_X = W + 60;
   const BG_LAYERS = [
     { key: "bg1", spd: 0.4 },
     { key: "bg2", spd: 0.9 },
@@ -49,12 +47,13 @@ window.addEventListener("error", (e) => {
   const BASE_SPD = 4.5;
   const WIN_DIST = 500;
   const ENEMY_ANIM_SPD = 0.07;
+  const METERS_PER_PX = 0.05; // keep original pacing, but track distance from actual scroll
 
   // ── CHARACTER ─────────────────────────────────────────────
   const CHAR_FW = 56;
   const CHAR_FH = 56;
   const CHAR_COLS = 8;
-  const CHAR_SCALE = 2.2;
+  const CHAR_SCALE = 2.75;
   const ROW_IDLE = 0;
   const ROW_RUN = 2;
   const ROW_JUMP = 3;
@@ -67,22 +66,46 @@ window.addEventListener("error", (e) => {
   const ENEMY_IDLE_COLS = 4;
   const ENEMY_FW = 150;
   const ENEMY_FH = 150;
-  const ENEMY_SCALE = 3.0;
+  const ENEMY_SCALE = 3.4;
   const ENEMY_ANCHOR_Y = 100 / 150;
 
   const app = new Application();
   await app.init({
-    width: W,
-    height: H,
+    width: 1,
+    height: 1,
     backgroundColor: 0x87ceeb,
-    resolution: 1,
+    resolution: Math.min(window.devicePixelRatio || 1, 2),
+    autoDensity: true,
     antialias: true,
   });
   const container = document.getElementById("pixi-container")!;
   container.appendChild(app.canvas);
-  // Сбрасываем инлайн-размеры которые ставит Pixi, CSS возьмёт управление
-  app.canvas.style.width = W + "px";
-  app.canvas.style.height = H + "px";
+
+  // ── RESPONSIVE SCALE (aspect-preserving, centered, letterbox) ─────────────
+  // We keep a fixed "design world" (W×H) and scale it into the real viewport.
+  const root = new Container();
+  app.stage.addChild(root);
+
+  // Ensure pointer events work even on "empty" pixels (tap-anywhere start)
+  app.stage.eventMode = "static";
+  app.stage.hitArea = app.screen;
+
+  function resize() {
+    const vw = Math.max(1, window.innerWidth);
+    const vh = Math.max(1, window.innerHeight);
+
+    app.renderer.resize(vw, vh);
+    app.stage.hitArea = app.screen;
+
+    const scale = Math.min(vw / W, vh / H);
+    root.scale.set(scale);
+    root.x = Math.round((vw - W * scale) / 2);
+    root.y = Math.round((vh - H * scale) / 2);
+  }
+
+  resize();
+  window.addEventListener("resize", resize);
+  window.addEventListener("orientationchange", resize);
 
   // ═══════════════════════════════════════════════════════════
   // ASSETS
@@ -96,8 +119,10 @@ window.addEventListener("error", (e) => {
     { alias: "bg3", src: "/assets/background_layer_3.png" },
     { alias: "coin", src: "/assets/MonedaD.png" },
     { alias: "fail", src: "/assets/fail.png" },
+    { alias: "finish", src: "/assets/finish.png" },
     { alias: "hand", src: "/assets/hand.png" },
     { alias: "adfooter", src: "/assets/adfooter.webp" },
+    { alias: "floor", src: "/assets/floor.png" },
   ];
   for (const a of ASSET_LIST) Assets.add(a);
   const T = await Assets.load(ASSET_LIST.map((a) => a.alias));
@@ -145,7 +170,7 @@ window.addEventListener("error", (e) => {
   const COIN_COLS = 5;
   const COIN_FW = 16;
   const COIN_FH = 16;
-  const COIN_SCALE = 3.5; // 16 * 3.5 = 56px
+  const COIN_SCALE = 4.6; // bigger money for stronger gameplay presence
 
   function coinFrames(): Texture[] {
     const src = T["coin"].source;
@@ -175,13 +200,26 @@ window.addEventListener("error", (e) => {
   const gameLayer = new Container();
   const fxLayer = new Container();
   const uiLayer = new Container();
-  app.stage.addChild(bgLayer, gameLayer, fxLayer, uiLayer);
+  root.addChild(bgLayer, gameLayer, fxLayer, uiLayer);
+
+  // ─── Helper: leftmost X visible in design (root) coordinates ───────────
+  // On wide screens the root is offset right, exposing area with x < 0
+  function visibleDesignLeft(): number {
+    return -root.x / root.scale.x;
+  }
+  function visibleDesignRight(): number {
+    return (window.innerWidth - root.x) / root.scale.x;
+  }
 
   // ═══════════════════════════════════════════════════════════
-  // PARALLAX BACKGROUND — 3 слоя 320×180, масштаб по высоте H
+  // PARALLAX BACKGROUND — 3 layers (320×180), scaled to design height H
   // ═══════════════════════════════════════════════════════════
   const BG_SCALE = H / 180; // 844/180 ≈ 4.69
   const BG_W = Math.round(320 * BG_SCALE); // ~1502px
+
+  // Spawn 6 tiles starting 1 tile left of origin — covers any viewport width
+  const NUM_BG_SPRITES = 6;
+  const BG_START_X = -BG_W; // start one tile to the left so wide screens are covered
 
   interface BgLayer {
     sprites: Sprite[];
@@ -191,34 +229,34 @@ window.addEventListener("error", (e) => {
 
   for (const cfg of BG_LAYERS) {
     const sprites: Sprite[] = [];
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < NUM_BG_SPRITES; i++) {
       const s = new Sprite(T[cfg.key]);
       s.scale.set(BG_SCALE);
-      s.x = i * BG_W;
-      s.y = 0;
+      // Overdraw by 2px top and bottom to prevent gap artifacts
+      s.y = -2;
+      s.height = H + 4;
+      s.x = BG_START_X + i * BG_W;
       bgLayer.addChild(s);
       sprites.push(s);
     }
     bgLayers.push({ sprites, spd: cfg.spd });
   }
 
-  // Трава — полоса от GRASS_Y до низа экрана
-  const grassStrip = new Graphics()
-    .rect(0, GRASS_Y, W, GRASS_H)
-    .fill(GRASS_COLOR);
-  const grassEdge = new Graphics().rect(0, GRASS_Y, W, 6).fill(0x3a6b2f);
-  bgLayer.addChild(grassStrip, grassEdge);
-
-  // Дорожная разметка — на траве
-  const roadMarks: Graphics[] = [];
-  for (let i = 0; i < 7; i++) {
-    const m = new Graphics()
-      .rect(0, 0, 36, 4)
-      .fill({ color: 0xffffff, alpha: 0.25 });
-    m.x = i * 68;
-    m.y = GRASS_Y + 14;
-    bgLayer.addChild(m);
-    roadMarks.push(m);
+  // ── FLOOR TILES (floor.png — horizontally seamless) ─────────────────────
+  const floorTex = T["floor"];
+  const FLOOR_SCALE = GRASS_H / floorTex.height; // fit height to ground strip
+  const FLOOR_TILE_W = Math.ceil(floorTex.width * FLOOR_SCALE);
+  // Spawn 16 tiles: start 3 tiles to the left so wide screens + left edge are covered
+  const NUM_FLOOR_TILES = 16;
+  const FLOOR_START_X = -3 * FLOOR_TILE_W;
+  const floorTiles: Sprite[] = [];
+  for (let i = 0; i < NUM_FLOOR_TILES; i++) {
+    const s = new Sprite(floorTex);
+    s.scale.set(FLOOR_SCALE);
+    s.x = FLOOR_START_X + i * FLOOR_TILE_W;
+    s.y = GRASS_Y;
+    bgLayer.addChild(s);
+    floorTiles.push(s);
   }
 
   // Ad banner
@@ -231,16 +269,73 @@ window.addEventListener("error", (e) => {
   // ═══════════════════════════════════════════════════════════
   // GAME STATE
   // ═══════════════════════════════════════════════════════════
-  type GameState = "menu" | "playing" | "dead" | "gameover" | "win";
+  type GameState =
+    | "menu"
+    | "playing"
+    | "finishing"
+    | "win_anim"
+    | "dead"
+    | "gameover"
+    | "win";
   let state: GameState = "menu";
   let score = 0,
+    displayScore = 0,
     distance = 0,
+    runPx = 0,
     lives = 3,
     speed = BASE_SPD;
   let bestScore = parseInt(localStorage.getItem("runnerBest") ?? "0");
   let obstTimer = 0,
     coinTimer = 0,
     stepTimer = 0;
+  const COIN_VALUE = 10;
+  let winAnimTimer = 0;
+
+  // Finish line (existing sprite)
+  const totalRunPx = WIN_DIST / METERS_PER_PX;
+  const finishSpr = new Sprite(T["finish"]);
+  finishSpr.anchor.set(0.5, 1);
+  finishSpr.scale.set(0.9);
+  finishSpr.y = CHAR_Y + 40;
+  const finishCrossX = PLAYER_X - finishSpr.width * 0.35;
+  const finishStartX = finishCrossX + totalRunPx;
+  finishSpr.x = finishStartX;
+  gameLayer.addChild(finishSpr);
+  let finishCrossed = false;
+
+  // CTA url helpers (Playable Ads compliant: user-initiated open only)
+  const DEFAULT_CTA_URL = "https://github.com/NikitaSipeykin/runner";
+  function getCtaUrl(): string {
+    const w = window as unknown as Record<string, unknown>;
+    const qs = new URLSearchParams(window.location.search);
+    const fromQs =
+      qs.get("clickUrl") ||
+      qs.get("clickurl") ||
+      qs.get("clickURL") ||
+      qs.get("url");
+    const fromGlobal =
+      (typeof w.clickTag === "string" && w.clickTag) ||
+      (typeof w.clickURL === "string" && w.clickURL) ||
+      (typeof w.CLICK_URL === "string" && w.CLICK_URL) ||
+      (typeof w.EXIT_URL === "string" && w.EXIT_URL);
+    return (fromQs || fromGlobal || DEFAULT_CTA_URL).toString();
+  }
+
+  function openCta(url = getCtaUrl()) {
+    try {
+      const mw = window as unknown as {
+        mraid?: { open?: (u: string) => void };
+      };
+      if (mw.mraid?.open) mw.mraid.open(url);
+      else window.open(url, "_blank");
+    } catch {
+      try {
+        window.open(url, "_blank");
+      } catch {
+        // noop
+      }
+    }
+  }
 
   // ═══════════════════════════════════════════════════════════
   // AUDIO
@@ -249,7 +344,7 @@ window.addEventListener("error", (e) => {
   bgMusic.loop = true;
   bgMusic.volume = 0.45;
 
-  // Браузер блокирует autoplay — запускаем при первом interaction
+  // Browsers block autoplay — unlock audio on first user interaction
   let musicUnlocked = false;
   function unlockMusic() {
     if (musicUnlocked) return;
@@ -260,7 +355,7 @@ window.addEventListener("error", (e) => {
   document.addEventListener("click", unlockMusic, { once: true });
   document.addEventListener("keydown", unlockMusic, { once: true });
 
-  // Hurt и step — lowercase расширения для совместимости
+  // Hurt/step: use lowercase extensions for compatibility
   const sndHurt = new Audio("/assets/player_hurt.mp3");
   sndHurt.volume = 0.9;
 
@@ -309,7 +404,7 @@ window.addEventListener("error", (e) => {
     sliding: false,
     slideTimer: 0,
     curRow: ROW_RUN,
-    deathPhase: 0, // 0=не начата, 1=часть1, 2=часть2
+    deathPhase: 0, // 0=not started, 1=part1, 2=part2
   };
 
   function switchAnim(row: number, spd = 0.15) {
@@ -363,7 +458,7 @@ window.addEventListener("error", (e) => {
   }
 
   function playerHitbox() {
-    // Реальный контент: ~20x31px в кадре 56x56 → hw=0.37, hh=0.55
+    // Real content is smaller than the sprite frame: ~20×31 inside 56×56
     const sk = pl.sliding ? 0.55 : 1.0;
     const pw = CHAR_FW * CHAR_SCALE * 0.37;
     const ph = CHAR_FH * CHAR_SCALE * 0.55 * sk;
@@ -377,7 +472,7 @@ window.addEventListener("error", (e) => {
       if (pl.slideTimer <= 0) endSlide();
     }
 
-    // Анимация по состоянию
+    // Animation by state
     if (!pl.dead && !pl.sliding) {
       if (pl.onGround) {
         if (pl.curRow !== ROW_RUN) {
@@ -385,7 +480,7 @@ window.addEventListener("error", (e) => {
           switchAnim(ROW_RUN);
         }
       } else {
-        // В воздухе: vy < 0 = летим вверх (jump), vy > 0 = падаем (fall)
+        // In air: vy < 0 = rising (jump), vy > 0 = falling
         const wantRow = pl.vy < 0 ? ROW_JUMP : ROW_FALL;
         if (pl.curRow !== wantRow) {
           pl.curRow = -1;
@@ -394,13 +489,13 @@ window.addEventListener("error", (e) => {
       }
     }
 
-    // Смерть — анимация в 2 части
+    // Death animation in 2 phases
     if (pl.dead) {
       if (pl.deathPhase === 0) {
         pl.deathPhase = 1;
         pl.curRow = -1;
         switchAnim(ROW_DEATH1, 0.14);
-        // Через 8 кадров переключаем на part2
+        // After ~8 frames switch to part2
         setTimeout(() => {
           if (pl.dead) {
             pl.curRow = -1;
@@ -411,7 +506,7 @@ window.addEventListener("error", (e) => {
       }
     }
 
-    // Физика
+    // Physics
     pl.vy += GRAVITY * dt;
     pl.y += pl.vy * dt;
 
@@ -426,7 +521,7 @@ window.addEventListener("error", (e) => {
       pl.onGround = false;
     }
 
-    // Мигание при неуязвимости
+    // Blink while invulnerable
     if (pl.invTimer > 0) {
       pl.invTimer -= dt;
       playerCont.alpha = Math.sin(pl.invTimer * 0.35) > 0 ? 1 : 0.3;
@@ -453,9 +548,9 @@ window.addEventListener("error", (e) => {
   }
   let obstacles: Obs[] = [];
 
-  // hw/hh — доля от размера спрайта, соответствующая реальному контенту
-  // Run:  content 25x35 из 150x150 → hw=0.17, hh=0.23
-  // Idle: content 22x35 из 150x150 → hw=0.15, hh=0.23
+  // hw/hh are fractions of sprite size that match the actual visible content
+  // Run:  content 25×35 inside 150×150 → hw=0.17, hh=0.23
+  // Idle: content 22×35 inside 150×150 → hw=0.15, hh=0.23
   const obsCfgs = [
     { key: "idle_obs", hw: 0.15, hh: 0.23 },
     { key: "idle_obs", hw: 0.15, hh: 0.23 },
@@ -479,13 +574,13 @@ window.addEventListener("error", (e) => {
     }
     spr.play();
     spr.anchor.set(0.5, ENEMY_ANCHOR_Y);
-    // scale.x уже установлен выше для idle_obs, для enemy ставим обычный
+    // scale.x is already mirrored for idle_obs; enemy uses the standard mirrored run
     if (cfg.key === "enemy") {
-      spr.scale.set(-ENEMY_SCALE, ENEMY_SCALE); // зеркало — бежит влево на игрока
+      spr.scale.set(-ENEMY_SCALE, ENEMY_SCALE); // mirrored so it runs toward the player
     } else {
       spr.scale.set(-ENEMY_SCALE, ENEMY_SCALE);
     }
-    spr.x = OBS_SPAWN_X;
+    spr.x = visibleDesignRight() + 60;
     spr.y = CHAR_Y;
     gameLayer.addChild(spr);
     obstacles.push({ spr, active: true, hw: cfg.hw, hh: cfg.hh });
@@ -503,7 +598,7 @@ window.addEventListener("error", (e) => {
       if (o.spr && o.active) o.spr.x -= speed * dt;
     }
     const toRemove = obstacles.filter(
-      (o) => !o.active || (o.spr && o.spr.x < -200),
+      (o) => !o.active || (o.spr && o.spr.x < visibleDesignLeft() - 200),
     );
     toRemove.forEach((o) => {
       if (o.spr) {
@@ -516,7 +611,7 @@ window.addEventListener("error", (e) => {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // COINS — анимированная монета MonedaD.png
+  // COINS — animated sprite from MonedaD.png
   // ═══════════════════════════════════════════════════════════
   interface Coin {
     spr: AnimatedSprite | null;
@@ -532,7 +627,7 @@ window.addEventListener("error", (e) => {
     a.play();
     a.anchor.set(0.5);
     a.scale.set(COIN_SCALE);
-    a.x = W + 30;
+    a.x = visibleDesignRight() + 30;
     a.y = ys[Math.floor(Math.random() * ys.length)];
     gameLayer.addChild(a);
     coins.push({ spr: a, active: true, phase: Math.random() * Math.PI * 2 });
@@ -543,9 +638,11 @@ window.addEventListener("error", (e) => {
       if (!c.spr || !c.active) continue;
       c.spr.x -= speed * dt;
       c.phase += 0.04 * dt;
-      c.spr.y += Math.sin(c.phase) * 0.35; // лёгкое покачивание
+      c.spr.y += Math.sin(c.phase) * 0.35; // subtle bobbing
     }
-    const toRemove = coins.filter((c) => !c.active || (c.spr && c.spr.x < -80));
+    const toRemove = coins.filter(
+      (c) => !c.active || (c.spr && c.spr.x < visibleDesignLeft() - 80),
+    );
     toRemove.forEach((c) => {
       if (c.spr) {
         gameLayer.removeChild(c.spr);
@@ -705,7 +802,7 @@ window.addEventListener("error", (e) => {
     text: "0",
     style: new TextStyle({
       fontFamily: "Arial Black,Impact,sans-serif",
-      fontSize: 30,
+      fontSize: 34,
       fontWeight: "bold",
       fill: "#fff",
       stroke: { color: "#333", width: 4 },
@@ -742,17 +839,17 @@ window.addEventListener("error", (e) => {
       const h = new Text({
         text: i < lives ? "♥" : "♡",
         style: new TextStyle({
-          fontSize: 24,
+          fontSize: 32,
           fill: i < lives ? "#ff4466" : "#aaa",
         }),
       });
-      h.x = i * 30;
+      h.x = i * 38;
       livesCont.addChild(h);
     }
   }
 
   function refreshScore() {
-    scoreText.text = score.toString();
+    scoreText.text = Math.round(displayScore).toString();
     distText.text = Math.floor(distance) + "m";
   }
 
@@ -787,9 +884,9 @@ window.addEventListener("error", (e) => {
         overlaps(pb, { x: c.spr.x - r, y: c.spr.y - r, w: r * 2, h: r * 2 })
       ) {
         c.active = false;
-        score += 10;
+        score += COIN_VALUE;
         spawnCoinFx(c.spr.x, c.spr.y);
-        floatText(c.spr.x, c.spr.y - 20, "+10");
+        floatText(c.spr.x, c.spr.y - 20, `+${COIN_VALUE}`);
         refreshScore();
       }
     }
@@ -816,18 +913,18 @@ window.addEventListener("error", (e) => {
   // MENU
   // ═══════════════════════════════════════════════════════════
   let menuCont: Container | null = null;
+  let menuTapArmed = true;
 
   function showMenu() {
     state = "menu";
     menuCont = new Container();
     uiLayer.addChild(menuCont);
+    menuTapArmed = true;
 
-    menuCont.addChild(
-      new Graphics().rect(0, 0, W, H).fill({ color: 0x000000, alpha: 0.38 }),
-    );
+    const MENU_CARD_W = Math.min(320, W - 40);
     menuCont.addChild(
       new Graphics()
-        .roundRect(W / 2 - 155, H / 2 - 200, 310, 230, 22)
+        .roundRect(W / 2 - MENU_CARD_W / 2, H / 2 - 200, MENU_CARD_W, 230, 22)
         .fill({ color: 0xffffff, alpha: 0.97 }),
     );
 
@@ -877,9 +974,9 @@ window.addEventListener("error", (e) => {
     const btnBg = new Graphics()
       .roundRect(W / 2 - 110, H / 2 + 32, 220, 58, 29)
       .fill(0x6c3fe8);
-    btnBg.interactive = true;
+    btnBg.eventMode = "static";
     btnBg.cursor = "pointer";
-    btnBg.on("pointertap", startGame);
+    btnBg.on("pointerdown", startGame);
     menuCont.addChild(btnBg);
 
     const btnT = new Text({
@@ -899,8 +996,8 @@ window.addEventListener("error", (e) => {
     const hand = new Sprite(T["hand"]);
     hand.anchor.set(0.5);
     hand.scale.set(0.075);
-    hand.x = W / 2 + 72;
-    hand.y = H / 2 + 68;
+    hand.x = W / 2 + 60;
+    hand.y = H / 2 + 157;
     menuCont.addChild(hand);
 
     let hp = 0;
@@ -910,7 +1007,7 @@ window.addEventListener("error", (e) => {
         return;
       }
       hp += 0.05;
-      hand.y = H / 2 + 68 + Math.sin(hp) * 7;
+      hand.y = H / 2 + 128 + Math.sin(hp) * 7;
       hand.rotation = Math.sin(hp * 0.5) * 0.08;
     };
     app.ticker.add(tick);
@@ -920,6 +1017,90 @@ window.addEventListener("error", (e) => {
   // WIN SCREEN
   // ═══════════════════════════════════════════════════════════
   let winCont: Container | null = null;
+  let confettiTicker: ((ticker: { deltaTime: number }) => void) | null = null;
+  const confettiParts: Array<{
+    g: Graphics;
+    vx: number;
+    vy: number;
+    vr: number;
+    life: number;
+    max: number;
+  }> = [];
+
+  function clearConfetti() {
+    if (confettiTicker) {
+      app.ticker.remove(confettiTicker);
+      confettiTicker = null;
+    }
+    for (const p of confettiParts) {
+      uiLayer.removeChild(p.g);
+      p.g.destroy();
+    }
+    confettiParts.length = 0;
+  }
+
+  function spawnConfettiBurst(count: number) {
+    clearConfetti();
+    const colors = [
+      0xffd700, 0xff6b6b, 0x6bcfff, 0x6bff8a, 0xffa500, 0xff69b4, 0xffffff,
+    ];
+
+    function addPiece() {
+      const vLeft = visibleDesignLeft();
+      const vRight = visibleDesignRight();
+      const spanW = vRight - vLeft;
+      const g = new Graphics()
+        .rect(0, 0, 6 + Math.random() * 8, 5 + Math.random() * 10)
+        .fill(colors[Math.floor(Math.random() * colors.length)]);
+      g.x = vLeft + Math.random() * spanW;
+      g.y = -20 - Math.random() * 80;
+      g.rotation = Math.random() * Math.PI * 2;
+      uiLayer.addChild(g);
+      const maxLife = 140 + Math.random() * 80;
+      confettiParts.push({
+        g,
+        vx: (Math.random() - 0.5) * 5,
+        vy: 1.5 + Math.random() * 3.5,
+        vr: (Math.random() - 0.5) * 0.3,
+        life: maxLife,
+        max: maxLife,
+      });
+    }
+
+    // Initial burst
+    for (let i = 0; i < count; i++) addPiece();
+
+    let spawnTimer = 0;
+    confettiTicker = (ticker) => {
+      const dt = ticker.deltaTime;
+
+      // Continuously spawn new pieces so confetti never runs out
+      spawnTimer += dt;
+      if (spawnTimer >= 2) {
+        spawnTimer = 0;
+        for (let i = 0; i < 6; i++) addPiece();
+      }
+
+      for (const p of confettiParts) {
+        p.life -= dt;
+        p.g.x += p.vx * dt;
+        p.g.y += p.vy * dt;
+        p.vy += 0.12 * dt;
+        p.g.rotation += p.vr * dt;
+        // Fade only in last 30 frames
+        p.g.alpha = p.life < 30 ? Math.max(0, p.life / 30) : 1;
+      }
+      for (let i = confettiParts.length - 1; i >= 0; i--) {
+        if (confettiParts[i].life <= 0 || confettiParts[i].g.y > H + 40) {
+          const g = confettiParts[i].g;
+          uiLayer.removeChild(g);
+          g.destroy();
+          confettiParts.splice(i, 1);
+        }
+      }
+    };
+    app.ticker.add(confettiTicker);
+  }
 
   function showWin() {
     if (score > bestScore) {
@@ -930,12 +1111,9 @@ window.addEventListener("error", (e) => {
     state = "gameover";
     winCont = new Container();
     uiLayer.addChild(winCont);
+    clearConfetti();
 
-    winCont.addChild(
-      new Graphics().rect(0, 0, W, H).fill({ color: 0x000000, alpha: 0.55 }),
-    );
-
-    // Золотой заголовок
+    // Golden title
     const title = new Text({
       text: "⚔ VICTORY! ⚔",
       style: new TextStyle({
@@ -952,7 +1130,7 @@ window.addEventListener("error", (e) => {
     title.y = H / 2 - 200;
     winCont.addChild(title);
 
-    // Анимация пульсации заголовка
+    // Title pulse animation
     let tp = 0;
     const tt = () => {
       if (state !== "gameover") {
@@ -964,15 +1142,16 @@ window.addEventListener("error", (e) => {
     };
     app.ticker.add(tt);
 
-    // Карточка результата
+    // Result card — responsive width
+    const CARD_W = Math.min(320, W - 40);
     winCont.addChild(
       new Graphics()
-        .roundRect(W / 2 - 140, H / 2 - 130, 280, 200, 20)
+        .roundRect(W / 2 - CARD_W / 2, H / 2 - 130, CARD_W, 200, 20)
         .fill({ color: 0xfff8e7, alpha: 0.97 }),
     );
 
     const lbl500 = new Text({
-      text: "500m ЗАВЕРШЕНО!",
+      text: `${WIN_DIST}m Completed!`,
       style: new TextStyle({
         fontFamily: "Arial Black",
         fontSize: 16,
@@ -999,7 +1178,7 @@ window.addEventListener("error", (e) => {
     winCont.addChild(val);
 
     const sub = new Text({
-      text: "ОЧКОВ",
+      text: "COINS",
       style: new TextStyle({
         fontFamily: "Arial Black",
         fontSize: 14,
@@ -1012,7 +1191,7 @@ window.addEventListener("error", (e) => {
     winCont.addChild(sub);
 
     const best = new Text({
-      text: "РЕКОРД: " + bestScore,
+      text: "BEST COINS: " + bestScore,
       style: new TextStyle({ fontFamily: "Arial", fontSize: 14, fill: "#888" }),
     });
     best.anchor.set(0.5);
@@ -1020,23 +1199,18 @@ window.addEventListener("error", (e) => {
     best.y = H / 2 + 44;
     winCont.addChild(best);
 
-    // Кнопка играть снова
-    const btnBg = new Graphics()
-      .roundRect(W / 2 - 115, H / 2 + 90, 230, 58, 29)
+    // Single DOWNLOAD button centered
+    const BTN_W = Math.min(260, W - 60);
+    const ctaBg = new Graphics()
+      .roundRect(W / 2 - BTN_W / 2, H / 2 + 90, BTN_W, 62, 31)
       .fill(0xd4a017);
-    btnBg.interactive = true;
-    btnBg.cursor = "pointer";
-    btnBg.on("pointertap", () => {
-      if (winCont) {
-        uiLayer.removeChild(winCont);
-        winCont = null;
-      }
-      restartGame();
-    });
-    winCont.addChild(btnBg);
+    ctaBg.eventMode = "static";
+    ctaBg.cursor = "pointer";
+    ctaBg.on("pointerdown", () => openCta());
+    winCont.addChild(ctaBg);
 
-    const btnT = new Text({
-      text: "ЕЩЁ РАЗ!",
+    const ctaT = new Text({
+      text: "DOWNLOAD",
       style: new TextStyle({
         fontFamily: "Arial Black,sans-serif",
         fontSize: 22,
@@ -1044,35 +1218,13 @@ window.addEventListener("error", (e) => {
         fill: "#fff",
       }),
     });
-    btnT.anchor.set(0.5);
-    btnT.x = W / 2;
-    btnT.y = H / 2 + 119;
-    winCont.addChild(btnT);
+    ctaT.anchor.set(0.5);
+    ctaT.x = W / 2;
+    ctaT.y = H / 2 + 121;
+    winCont.addChild(ctaT);
 
-    // Конфетти-частицы
-    for (let i = 0; i < 60; i++) {
-      const g = new Graphics()
-        .rect(0, 0, 6, 6)
-        .fill([0xffd700, 0xff6b6b, 0x6bcfff, 0x6bff8a][i % 4]);
-      g.x = Math.random() * W;
-      g.y = -20 - Math.random() * H;
-      uiLayer.addChild(g);
-      const vx = (Math.random() - 0.5) * 3;
-      const vy = 2 + Math.random() * 3;
-      const confTick = () => {
-        if (state !== "gameover") {
-          uiLayer.removeChild(g);
-          g.destroy();
-          app.ticker.remove(confTick);
-          return;
-        }
-        g.x += vx;
-        g.y += vy;
-        g.rotation += 0.1;
-        if (g.y > H + 20) g.y = -20;
-      };
-      app.ticker.add(confTick);
-    }
+    // Confetti already started at finish line crossing
+    spawnConfettiBurst(200);
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -1088,10 +1240,7 @@ window.addEventListener("error", (e) => {
     state = "gameover";
     goCont = new Container();
     uiLayer.addChild(goCont);
-
-    goCont.addChild(
-      new Graphics().rect(0, 0, W, H).fill({ color: 0x000000, alpha: 0.5 }),
-    );
+    clearConfetti();
 
     const failSpr = new Sprite(T["fail"]);
     failSpr.anchor.set(0.5);
@@ -1111,14 +1260,15 @@ window.addEventListener("error", (e) => {
     };
     app.ticker.add(ft);
 
+    const GO_CARD_W = Math.min(300, W - 40);
     goCont.addChild(
       new Graphics()
-        .roundRect(W / 2 - 130, H / 2 - 68, 260, 165, 18)
+        .roundRect(W / 2 - GO_CARD_W / 2, H / 2 - 68, GO_CARD_W, 165, 18)
         .fill({ color: 0xffffff, alpha: 0.97 }),
     );
 
     const lbl = new Text({
-      text: "SCORE",
+      text: "COINS",
       style: new TextStyle({
         fontFamily: "Arial Black",
         fontSize: 15,
@@ -1153,16 +1303,18 @@ window.addEventListener("error", (e) => {
     best.y = H / 2 + 66;
     goCont.addChild(best);
 
+    // Single DOWNLOAD button
+    const GO_BTN_W = Math.min(260, W - 60);
     const btnBg = new Graphics()
-      .roundRect(W / 2 - 115, H / 2 + 108, 230, 58, 29)
-      .fill(0x6c3fe8);
-    btnBg.interactive = true;
+      .roundRect(W / 2 - GO_BTN_W / 2, H / 2 + 108, GO_BTN_W, 62, 31)
+      .fill(0xd4a017);
+    btnBg.eventMode = "static";
     btnBg.cursor = "pointer";
-    btnBg.on("pointertap", restartGame);
+    btnBg.on("pointerdown", () => openCta());
     goCont.addChild(btnBg);
 
     const btnT = new Text({
-      text: "TRY AGAIN",
+      text: "DOWNLOAD",
       style: new TextStyle({
         fontFamily: "Arial Black,sans-serif",
         fontSize: 22,
@@ -1172,7 +1324,7 @@ window.addEventListener("error", (e) => {
     });
     btnT.anchor.set(0.5);
     btnT.x = W / 2;
-    btnT.y = H / 2 + 137;
+    btnT.y = H / 2 + 139;
     goCont.addChild(btnT);
   }
 
@@ -1206,6 +1358,7 @@ window.addEventListener("error", (e) => {
     coins = [];
     parts = [];
     floats = [];
+    clearConfetti();
   }
 
   function startGame() {
@@ -1217,14 +1370,23 @@ window.addEventListener("error", (e) => {
       uiLayer.removeChild(goCont);
       goCont = null;
     }
+    if (winCont) {
+      uiLayer.removeChild(winCont);
+      winCont = null;
+    }
     clearAll();
 
     score = 0;
     distance = 0;
+    runPx = 0;
+    displayScore = 0;
     lives = 3;
     speed = BASE_SPD;
     obstTimer = 0;
     coinTimer = 0;
+    winAnimTimer = 0;
+    finishCrossed = false;
+    finishSpr.x = finishStartX;
 
     pl.x = PLAYER_X;
     pl.y = CHAR_Y;
@@ -1244,25 +1406,30 @@ window.addEventListener("error", (e) => {
     pl.curRow = ROW_RUN;
     playerCont.addChild(playerAnim);
     playerCont.alpha = 1;
+    playerCont.scale.set(1);
     playerCont.x = pl.x;
     playerCont.y = pl.y;
 
     refreshLives();
     refreshScore();
-    // Музыка: первый interaction уже был (кнопка PLAY = клик) — запускаем
+    // Music: first interaction already happened (tap/click) — start playback
     bgMusic.currentTime = 0;
     bgMusic.play().catch(() => {});
     state = "playing";
-  }
-
-  function restartGame() {
-    startGame();
+    menuTapArmed = false;
   }
 
   // ═══════════════════════════════════════════════════════════
-  // INPUT — клавиатура + тач (тап = прыжок, свайп вниз = слайд)
+  // INPUT — keyboard + touch (tap = jump, swipe down = slide)
   // ═══════════════════════════════════════════════════════════
   let ty0 = 0;
+
+  function tryStartFromAnywhere() {
+    if (state !== "menu") return;
+    if (!menuTapArmed) return;
+    menuTapArmed = false;
+    startGame();
+  }
 
   window.addEventListener("keydown", (e) => {
     if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") {
@@ -1280,6 +1447,7 @@ window.addEventListener("error", (e) => {
     (e) => {
       e.preventDefault();
       ty0 = e.touches[0].clientY;
+      tryStartFromAnywhere();
     },
     { passive: false },
   );
@@ -1291,13 +1459,23 @@ window.addEventListener("error", (e) => {
       const dy = ty0 - e.changedTouches[0].clientY;
       if (dy < -30 && state === "playing") doSlide();
       else if (state === "playing") doJump();
+      else tryStartFromAnywhere();
     },
     { passive: false },
   );
 
-  // Клик мышью (для десктопа в браузере)
+  // Mouse click (desktop)
   app.canvas.addEventListener("pointerdown", (e) => {
-    if (e.pointerType === "mouse" && state === "playing") doJump();
+    if (state === "playing") {
+      if (e.pointerType === "mouse") doJump();
+    } else {
+      tryStartFromAnywhere();
+    }
+  });
+
+  // Pixi pointer events (helps WebViews capture the first interaction reliably)
+  app.stage.on("pointerdown", () => {
+    if (state === "menu") tryStartFromAnywhere();
   });
 
   // ═══════════════════════════════════════════════════════════
@@ -1305,14 +1483,20 @@ window.addEventListener("error", (e) => {
   // ═══════════════════════════════════════════════════════════
   app.ticker.add((ticker) => {
     const dt = ticker.deltaTime;
-    if (state !== "playing" && state !== "dead") return;
+    if (
+      state !== "playing" &&
+      state !== "finishing" &&
+      state !== "win_anim" &&
+      state !== "dead"
+    )
+      return;
 
-    if (state === "playing") {
-      distance += speed * dt * 0.05;
-      score = Math.floor(distance * 2);
+    if (state === "playing" || state === "finishing") {
+      runPx += speed * dt;
+      distance = runPx * METERS_PER_PX;
       speed = Math.min(BASE_SPD + Math.floor(distance / 70) * 0.35, 11.5);
 
-      // Шаги — каждые ~18 кадров на земле
+      // Steps — roughly every ~18 frames on ground
       if (pl.onGround && !pl.sliding && !pl.dead) {
         stepTimer += dt;
         if (stepTimer > 18) {
@@ -1322,27 +1506,67 @@ window.addEventListener("error", (e) => {
       } else {
         stepTimer = 0;
       }
-
-      // Финиш — 500м
-      if (distance >= WIN_DIST) {
-        state = "dead";
-        setTimeout(showWin, 400);
-      }
     }
 
-    // Параллакс — каждый слой со своей скоростью
+    // Smooth count-up (coin-only score)
+    if (displayScore !== score) {
+      const diff = score - displayScore;
+      displayScore += Math.sign(diff) * Math.max(1, Math.abs(diff) * 0.25);
+      if (Math.abs(score - displayScore) < 0.5) displayScore = score;
+    }
+
+    // Win beat (0.8–1.2s), then CTA screen
+    if (state === "win_anim") {
+      winAnimTimer += dt;
+      const t = Math.min(1, winAnimTimer / 65);
+      playerCont.scale.set(1 + Math.sin(t * Math.PI) * 0.06);
+      updatePlayer(dt);
+      updateParts(dt);
+      updateFloats(dt);
+      updateFlash(dt);
+      refreshScore();
+
+      if (winAnimTimer >= 65) {
+        playerCont.scale.set(1);
+        state = "dead";
+        setTimeout(showWin, 50);
+      }
+      return;
+    }
+
+    // Parallax background — wrap when tile fully exits visible design area
+    const vLeft = visibleDesignLeft();
     for (const layer of bgLayers) {
       for (const s of layer.sprites) {
         s.x -= layer.spd * dt;
-        if (s.x <= -BG_W) s.x += BG_W * 2;
+        if (s.x + BG_W <= vLeft) s.x += NUM_BG_SPRITES * BG_W;
       }
     }
 
-    for (const m of roadMarks) {
-      m.x -= speed * dt;
-      if (m.x < -50) m.x += W + 50;
+    // Floor tiles scroll at game speed
+    for (const tile of floorTiles) {
+      tile.x -= speed * dt;
+      if (tile.x + FLOOR_TILE_W <= vLeft)
+        tile.x += NUM_FLOOR_TILES * FLOOR_TILE_W;
     }
 
+    // Finish line: must be visually crossed before victory triggers
+    if (!finishCrossed && (state === "playing" || state === "finishing")) {
+      finishSpr.x -= speed * dt;
+      if (state === "playing" && finishSpr.x < W - 90) {
+        state = "finishing"; // stop new spawns near the end
+      }
+      if (finishSpr.x < finishCrossX) {
+        finishCrossed = true;
+        state = "win_anim";
+        winAnimTimer = 0;
+        pl.curRow = -1;
+        switchAnim(ROW_IDLE, 0.12);
+        spawnDust(pl.x, CHAR_Y, 0xffd700, 18);
+      }
+    }
+
+    // Spawns only while actively playing (not during finishing/dead)
     if (state === "playing") {
       const interval = Math.max(52, 118 - Math.floor(distance / 35) * 3);
       obstTimer += dt;
@@ -1364,7 +1588,7 @@ window.addEventListener("error", (e) => {
     updateFloats(dt);
     updateFlash(dt);
 
-    if (state === "playing") {
+    if (state === "playing" || state === "finishing") {
       checkCollisions();
       refreshScore();
     }
@@ -1376,7 +1600,7 @@ window.addEventListener("error", (e) => {
   showMenu();
 })().catch((err) => {
   console.error("Game failed to start:", err);
-  document.body.innerHTML = `<pre style="color:red;padding:20px;font-size:13px;white-space:pre-wrap;">ОШИБКА:
+  document.body.innerHTML = `<pre style="color:red;padding:20px;font-size:13px;white-space:pre-wrap;">ERROR:
 ${err?.message || err}
 ${err?.stack || ""}</pre>`;
 });
