@@ -274,8 +274,8 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   function resizeAd() {
     const vw = window.innerWidth;
     const scale = root.scale.x;
-    const designW = vw / scale;       // full viewport in design coords
-    const offsetX = -root.x / scale;  // left edge in design coords
+    const designW = vw / scale; // full viewport in design coords
+    const offsetX = -root.x / scale; // left edge in design coords
 
     // Fixed scale — always 1.5×, mask clips sides on narrow screens
     const adScale = MAX_AD_SCALE;
