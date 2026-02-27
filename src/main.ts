@@ -51,7 +51,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
 
   // ── CHARACTER ─────────────────────────────────────────────
   const CHAR_FW = 56;
-  const CHAR_FH = 56;
+  const CHAR_FH = 57;
   const CHAR_COLS = 8;
   const CHAR_SCALE = 2.75;
   const ROW_IDLE = 0;
@@ -451,7 +451,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     .fill({ color: 0x000000, alpha: 0.18 });
   gameLayer.addChildAt(shadow, 0);
 
-  let playerAnim = makeCharAnim(ROW_RUN);
+  const playerAnim = makeCharAnim(ROW_RUN);
   playerCont.addChild(playerAnim);
 
   const pl = {
@@ -463,7 +463,6 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     dead: false,
     invTimer: 0,
     sliding: false,
-    slideTimer: 0,
     curRow: ROW_RUN,
     deathPhase: 0, // 0=not started, 1=part1, 2=part2
   };
@@ -471,22 +470,22 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   function switchAnim(row: number, spd = 0.15) {
     if (pl.curRow === row) return;
     pl.curRow = row;
-    playerCont.removeChild(playerAnim);
-    playerAnim.destroy();
-    playerAnim = makeCharAnim(row, spd);
+    // Swap textures in-place — no destroy/create, no GC pressure
+    playerAnim.textures = CACHED_CHAR_FRAMES[row];
+    playerAnim.animationSpeed = spd;
+    playerAnim.gotoAndPlay(0);
     if (pl.sliding) {
       playerAnim.scale.y = CHAR_SCALE * 0.52;
       playerAnim.y = CHAR_FH * CHAR_SCALE * 0.32;
+    } else {
+      playerAnim.scale.set(CHAR_SCALE);
+      playerAnim.y = 0;
     }
-    playerCont.addChild(playerAnim);
   }
 
   function doJump() {
     if (pl.dead) return;
-    if (pl.sliding) {
-      endSlide();
-      return;
-    }
+
     if (pl.onGround) {
       pl.vy = JUMP_V;
       pl.onGround = false;
@@ -500,24 +499,6 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     }
   }
 
-  function doSlide() {
-    if (pl.dead || !pl.onGround || pl.sliding) return;
-    pl.sliding = true;
-    pl.slideTimer = 44;
-    switchAnim(ROW_IDLE, 0.1);
-    playerAnim.scale.y = CHAR_SCALE * 0.52;
-    playerAnim.y = CHAR_FH * CHAR_SCALE * 0.32;
-  }
-
-  function endSlide() {
-    pl.sliding = false;
-    pl.slideTimer = 0;
-    playerAnim.scale.y = CHAR_SCALE;
-    playerAnim.y = 0;
-    pl.curRow = -1;
-    switchAnim(ROW_RUN);
-  }
-
   function playerHitbox() {
     // Real content is smaller than the sprite frame: ~20×31 inside 56×56
     const sk = pl.sliding ? 0.55 : 1.0;
@@ -527,12 +508,6 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   }
 
   function updatePlayer(dt: number) {
-    // Slide timer
-    if (pl.slideTimer > 0) {
-      pl.slideTimer -= dt;
-      if (pl.slideTimer <= 0) endSlide();
-    }
-
     // Animation by state
     if (!pl.dead && !pl.sliding) {
       if (pl.onGround) {
@@ -605,17 +580,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   // ═══════════════════════════════════════════════════════════
   // OBSTACLES
   // ═══════════════════════════════════════════════════════════
-  interface Obs {
-    spr: Sprite | AnimatedSprite | null;
-    active: boolean;
-    hw: number;
-    hh: number;
-  }
-  let obstacles: Obs[] = [];
-
   // hw/hh are fractions of sprite size that match the actual visible content
-  // Run:  content 25×35 inside 150×150 → hw=0.17, hh=0.23
-  // Idle: content 22×35 inside 150×150 → hw=0.15, hh=0.23
   const obsCfgs = [
     { key: "idle_obs", hw: 0.15, hh: 0.23 },
     { key: "idle_obs", hw: 0.15, hh: 0.23 },
@@ -623,99 +588,113 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     { key: "enemy", hw: 0.17, hh: 0.23 },
   ];
 
+  // ── ENEMY POOL ────────────────────────────────────────────
+  interface PooledObs {
+    spr: AnimatedSprite;
+    active: boolean;
+    hw: number;
+    hh: number;
+  }
+  const OBS_POOL_SIZE = 6;
+  const obsPool: PooledObs[] = [];
+  for (let i = 0; i < OBS_POOL_SIZE; i++) {
+    const spr = new AnimatedSprite(CACHED_ENEMY_RUN_FRAMES);
+    spr.anchor.set(0.5, ENEMY_ANCHOR_Y);
+    spr.scale.set(-ENEMY_SCALE, ENEMY_SCALE);
+    spr.animationSpeed = ENEMY_ANIM_SPD;
+    spr.visible = false;
+    gameLayer.addChild(spr);
+    obsPool.push({ spr, active: false, hw: 0.17, hh: 0.23 });
+  }
+  let obstacles: PooledObs[] = [];
+
   function spawnObs() {
     if (distance < 10) return;
-    const pool = distance < 40 ? [obsCfgs[0]] : obsCfgs;
-    const cfg = pool[Math.floor(Math.random() * pool.length)];
-
-    let spr: AnimatedSprite;
-    if (cfg.key === "enemy") {
-      spr = new AnimatedSprite(CACHED_ENEMY_RUN_FRAMES);
-      spr.animationSpeed = ENEMY_ANIM_SPD;
-    } else {
-      spr = new AnimatedSprite(CACHED_ENEMY_IDLE_FRAMES);
-      spr.animationSpeed = ENEMY_ANIM_SPD * 0.8;
-      spr.scale.x = -ENEMY_SCALE;
-    }
-    spr.play();
-    spr.anchor.set(0.5, ENEMY_ANCHOR_Y);
-    // scale.x is already mirrored for idle_obs; enemy uses the standard mirrored run
-    if (cfg.key === "enemy") {
-      spr.scale.set(-ENEMY_SCALE, ENEMY_SCALE); // mirrored so it runs toward the player
-    } else {
-      spr.scale.set(-ENEMY_SCALE, ENEMY_SCALE);
-    }
-    spr.x = visibleDesignRight() + 60;
-    spr.y = CHAR_Y;
-    gameLayer.addChild(spr);
-    obstacles.push({ spr, active: true, hw: cfg.hw, hh: cfg.hh });
+    const cfgPool = distance < 40 ? [obsCfgs[0]] : obsCfgs;
+    const cfg = cfgPool[Math.floor(Math.random() * cfgPool.length)];
+    const slot = obsPool.find((o) => !o.active);
+    if (!slot) return;
+    const frames =
+      cfg.key === "enemy" ? CACHED_ENEMY_RUN_FRAMES : CACHED_ENEMY_IDLE_FRAMES;
+    slot.spr.textures = frames;
+    slot.spr.animationSpeed =
+      cfg.key === "enemy" ? ENEMY_ANIM_SPD : ENEMY_ANIM_SPD * 0.8;
+    slot.spr.scale.set(-ENEMY_SCALE, ENEMY_SCALE);
+    slot.spr.x = visibleDesignRight() + 60;
+    slot.spr.y = CHAR_Y;
+    slot.spr.visible = true;
+    slot.spr.gotoAndPlay(0);
+    slot.hw = cfg.hw;
+    slot.hh = cfg.hh;
+    slot.active = true;
+    obstacles.push(slot);
   }
 
-  function obsHitbox(o: Obs) {
-    const s = o.spr!;
-    const w = s.width * o.hw,
-      h = s.height * o.hh;
-    return { x: s.x - w / 2, y: s.y - h, w, h };
+  function obsHitbox(o: PooledObs) {
+    const w = o.spr.width * o.hw,
+      h = o.spr.height * o.hh;
+    return { x: o.spr.x - w / 2, y: o.spr.y - h, w, h };
   }
 
   function updateObs(dt: number) {
+    const vLeft = visibleDesignLeft();
     for (const o of obstacles) {
-      if (o.spr && o.active) o.spr.x -= speed * dt;
+      if (o.active) o.spr.x -= speed * dt;
     }
-    const toRemove = obstacles.filter(
-      (o) => !o.active || (o.spr && o.spr.x < visibleDesignLeft() - 200),
-    );
-    toRemove.forEach((o) => {
-      if (o.spr) {
-        gameLayer.removeChild(o.spr);
-        o.spr.destroy();
-        o.spr = null;
+    for (const o of obstacles) {
+      if (!o.active || o.spr.x < vLeft - 200) {
+        o.active = false;
+        o.spr.visible = false;
       }
-    });
-    obstacles = obstacles.filter((o) => o.spr !== null);
+    }
+    obstacles = obstacles.filter((o) => o.active);
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // COINS — animated sprite from MonedaD.png
-  // ═══════════════════════════════════════════════════════════
-  interface Coin {
-    spr: AnimatedSprite | null;
+  // ── COIN POOL ─────────────────────────────────────────────
+  interface PooledCoin {
+    spr: AnimatedSprite;
     active: boolean;
     phase: number;
   }
-  let coins: Coin[] = [];
+  const COIN_POOL_SIZE = 8;
+  const coinPool: PooledCoin[] = [];
+  for (let i = 0; i < COIN_POOL_SIZE; i++) {
+    const spr = new AnimatedSprite(CACHED_COIN_FRAMES);
+    spr.anchor.set(0.5);
+    spr.scale.set(COIN_SCALE);
+    spr.animationSpeed = 0.14;
+    spr.visible = false;
+    gameLayer.addChild(spr);
+    coinPool.push({ spr, active: false, phase: 0 });
+  }
+  let coins: PooledCoin[] = [];
 
   function spawnCoin() {
+    const slot = coinPool.find((c) => !c.active);
+    if (!slot) return;
     const ys = [CHAR_Y - 50, CHAR_Y - 110, CHAR_Y - 180];
-    const a = new AnimatedSprite(CACHED_COIN_FRAMES);
-    a.animationSpeed = 0.14;
-    a.play();
-    a.anchor.set(0.5);
-    a.scale.set(COIN_SCALE);
-    a.x = visibleDesignRight() + 30;
-    a.y = ys[Math.floor(Math.random() * ys.length)];
-    gameLayer.addChild(a);
-    coins.push({ spr: a, active: true, phase: Math.random() * Math.PI * 2 });
+    slot.spr.x = visibleDesignRight() + 30;
+    slot.spr.y = ys[Math.floor(Math.random() * ys.length)];
+    slot.spr.visible = true;
+    slot.spr.gotoAndPlay(0);
+    slot.active = true;
+    slot.phase = Math.random() * Math.PI * 2;
+    coins.push(slot);
   }
 
   function updateCoins(dt: number) {
+    const vLeft = visibleDesignLeft();
     for (const c of coins) {
-      if (!c.spr || !c.active) continue;
+      if (!c.active) continue;
       c.spr.x -= speed * dt;
       c.phase += 0.04 * dt;
-      c.spr.y += Math.sin(c.phase) * 0.35; // subtle bobbing
-    }
-    const toRemove = coins.filter(
-      (c) => !c.active || (c.spr && c.spr.x < visibleDesignLeft() - 80),
-    );
-    toRemove.forEach((c) => {
-      if (c.spr) {
-        gameLayer.removeChild(c.spr);
-        c.spr.destroy();
-        c.spr = null;
+      c.spr.y += Math.sin(c.phase) * 0.35;
+      if (c.spr.x < vLeft - 80) {
+        c.active = false;
+        c.spr.visible = false;
       }
-    });
-    coins = coins.filter((c) => c.spr !== null);
+    }
+    coins = coins.filter((c) => c.active);
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -821,33 +800,47 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // FLOATING TEXT
-  // ═══════════════════════════════════════════════════════════
+  // ── FLOAT TEXT POOL ───────────────────────────────────────
   interface FT {
     t: Text;
     vy: number;
     life: number;
     max: number;
+    active: boolean;
   }
-  let floats: FT[] = [];
-
-  function floatText(x: number, y: number, txt: string, color = "#FFD700") {
+  const FLOAT_POOL_SIZE = 8;
+  const floatPool: FT[] = Array.from({ length: FLOAT_POOL_SIZE }, () => {
     const t = new Text({
-      text: txt,
+      text: "",
       style: new TextStyle({
         fontFamily: "Arial Black",
         fontSize: 22,
         fontWeight: "bold",
-        fill: color,
+        fill: "#FFD700",
         stroke: { color: "#333", width: 3 },
       }),
     });
     t.anchor.set(0.5);
-    t.x = x;
-    t.y = y;
+    t.visible = false;
     uiLayer.addChild(t);
-    floats.push({ t, vy: -2.2, life: 38, max: 38 });
+    return { t, vy: 0, life: 0, max: 1, active: false };
+  });
+  let floats: FT[] = [];
+
+  function floatText(x: number, y: number, txt: string, color = "#FFD700") {
+    const slot = floatPool.find((f) => !f.active);
+    if (!slot) return;
+    slot.t.text = txt;
+    (slot.t.style as TextStyle).fill = color;
+    slot.t.x = x;
+    slot.t.y = y;
+    slot.t.alpha = 1;
+    slot.t.visible = true;
+    slot.vy = -2.2;
+    slot.life = 38;
+    slot.max = 38;
+    slot.active = true;
+    floats.push(slot);
   }
 
   function updateFloats(dt: number) {
@@ -856,14 +849,12 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
       f.t.y += f.vy * dt;
       f.vy *= 0.95;
       f.t.alpha = Math.max(0, f.life / f.max);
+      if (f.life <= 0) {
+        f.active = false;
+        f.t.visible = false;
+      }
     }
-    floats
-      .filter((f) => f.life <= 0)
-      .forEach((f) => {
-        uiLayer.removeChild(f.t);
-        f.t.destroy();
-      });
-    floats = floats.filter((f) => f.life > 0);
+    floats = floats.filter((f) => f.active);
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -955,6 +946,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
         overlaps(pb, { x: c.spr.x - r, y: c.spr.y - r, w: r * 2, h: r * 2 })
       ) {
         c.active = false;
+        c.spr.visible = false;
         score += COIN_VALUE;
         spawnCoinFx(c.spr.x, c.spr.y);
         floatText(c.spr.x, c.spr.y - 20, `+${COIN_VALUE}`);
@@ -1088,63 +1080,77 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   // ═══════════════════════════════════════════════════════════
   let winCont: Container | null = null;
   let confettiTicker: ((ticker: { deltaTime: number }) => void) | null = null;
-  const confettiParts: Array<{
+
+  // Pre-allocated confetti pool
+  const CONFETTI_POOL_SIZE = 250;
+  const CONFETTI_COLORS = [
+    0xffd700, 0xff6b6b, 0x6bcfff, 0x6bff8a, 0xffa500, 0xff69b4, 0xffffff,
+  ];
+  interface CPart {
     g: Graphics;
     vx: number;
     vy: number;
     vr: number;
     life: number;
     max: number;
-  }> = [];
+    active: boolean;
+  }
+  const confettiPool: CPart[] = Array.from(
+    { length: CONFETTI_POOL_SIZE },
+    () => {
+      const g = new Graphics().rect(0, 0, 10, 8).fill(0xffffff);
+      g.visible = false;
+      uiLayer.addChild(g);
+      return { g, vx: 0, vy: 0, vr: 0, life: 0, max: 1, active: false };
+    },
+  );
+  const confettiParts: CPart[] = [];
 
   function clearConfetti() {
     if (confettiTicker) {
       app.ticker.remove(confettiTicker);
       confettiTicker = null;
     }
-    for (const p of confettiParts) {
-      uiLayer.removeChild(p.g);
-      p.g.destroy();
+    for (const p of confettiPool) {
+      p.active = false;
+      p.g.visible = false;
     }
     confettiParts.length = 0;
   }
 
   function spawnConfettiBurst(count: number) {
     clearConfetti();
-    const colors = [
-      0xffd700, 0xff6b6b, 0x6bcfff, 0x6bff8a, 0xffa500, 0xff69b4, 0xffffff,
-    ];
 
     function addPiece() {
+      const slot = confettiPool.find((p) => !p.active);
+      if (!slot) return;
       const vLeft = visibleDesignLeft();
-      const vRight = visibleDesignRight();
-      const spanW = vRight - vLeft;
-      const g = new Graphics()
-        .rect(0, 0, 6 + Math.random() * 8, 5 + Math.random() * 10)
-        .fill(colors[Math.floor(Math.random() * colors.length)]);
-      g.x = vLeft + Math.random() * spanW;
-      g.y = -20 - Math.random() * 80;
-      g.rotation = Math.random() * Math.PI * 2;
-      uiLayer.addChild(g);
+      const spanW = visibleDesignRight() - vLeft;
+      const color =
+        CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)];
+      const w = 6 + Math.random() * 8,
+        h = 5 + Math.random() * 10;
+      slot.g.clear().rect(0, 0, w, h).fill(color);
+      slot.g.x = vLeft + Math.random() * spanW;
+      slot.g.y = -20 - Math.random() * 80;
+      slot.g.rotation = Math.random() * Math.PI * 2;
+      slot.g.alpha = 1;
+      slot.g.visible = true;
       const maxLife = 140 + Math.random() * 80;
-      confettiParts.push({
-        g,
-        vx: (Math.random() - 0.5) * 5,
-        vy: 1.5 + Math.random() * 3.5,
-        vr: (Math.random() - 0.5) * 0.3,
-        life: maxLife,
-        max: maxLife,
-      });
+      slot.vx = (Math.random() - 0.5) * 5;
+      slot.vy = 1.5 + Math.random() * 3.5;
+      slot.vr = (Math.random() - 0.5) * 0.3;
+      slot.life = maxLife;
+      slot.max = maxLife;
+      slot.active = true;
+      confettiParts.push(slot);
     }
 
-    // Initial burst
     for (let i = 0; i < count; i++) addPiece();
 
     let spawnTimer = 0;
     confettiTicker = (ticker) => {
       const dt = ticker.deltaTime;
-
-      // Continuously spawn new pieces so confetti never runs out
       spawnTimer += dt;
       if (spawnTimer >= 2) {
         spawnTimer = 0;
@@ -1157,14 +1163,13 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
         p.g.y += p.vy * dt;
         p.vy += 0.12 * dt;
         p.g.rotation += p.vr * dt;
-        // Fade only in last 30 frames
         p.g.alpha = p.life < 30 ? Math.max(0, p.life / 30) : 1;
       }
       for (let i = confettiParts.length - 1; i >= 0; i--) {
-        if (confettiParts[i].life <= 0 || confettiParts[i].g.y > H + 40) {
-          const g = confettiParts[i].g;
-          uiLayer.removeChild(g);
-          g.destroy();
+        const p = confettiParts[i];
+        if (p.life <= 0 || p.g.y > H + 40) {
+          p.active = false;
+          p.g.visible = false;
           confettiParts.splice(i, 1);
         }
       }
@@ -1404,31 +1409,27 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   // START / RESTART
   // ═══════════════════════════════════════════════════════════
   function clearAll() {
-    obstacles.forEach((o) => {
-      if (o.spr) {
-        gameLayer.removeChild(o.spr);
-        o.spr.destroy();
-        o.spr = null;
-      }
-    });
-    coins.forEach((c) => {
-      if (c.spr) {
-        gameLayer.removeChild(c.spr);
-        c.spr.destroy();
-        c.spr = null;
-      }
-    });
-    // Reset particle pool — hide all active particles
+    // Return all pooled enemies and coins to inactive state
+    for (const o of obsPool) {
+      o.active = false;
+      o.spr.visible = false;
+    }
+    for (const c of coinPool) {
+      c.active = false;
+      c.spr.visible = false;
+    }
+    obstacles = [];
+    coins = [];
+    // Reset particle pool
     for (const p of partPool) {
       p.active = false;
       p.g.visible = false;
     }
-    floats.forEach((f) => {
-      uiLayer.removeChild(f.t);
-      f.t.destroy();
-    });
-    obstacles = [];
-    coins = [];
+    // Reset float text pool
+    for (const f of floatPool) {
+      f.active = false;
+      f.t.visible = false;
+    }
     floats = [];
     clearConfetti();
   }
@@ -1468,15 +1469,16 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     pl.dead = false;
     pl.invTimer = 0;
     pl.sliding = false;
-    pl.slideTimer = 0;
     pl.curRow = -1;
     pl.deathPhase = 0;
 
-    playerCont.removeChild(playerAnim);
-    playerAnim.destroy();
-    playerAnim = makeCharAnim(ROW_RUN, 0.15);
+    // Reset player animation in-place — no destroy/create
+    playerAnim.loop = true;
+    playerAnim.onComplete = undefined;
+    playerAnim.scale.set(CHAR_SCALE);
+    playerAnim.y = 0;
+    switchAnim(ROW_RUN, 0.15);
     pl.curRow = ROW_RUN;
-    playerCont.addChild(playerAnim);
     playerCont.alpha = 1;
     playerCont.scale.set(1);
     playerCont.x = pl.x;
@@ -1494,7 +1496,6 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   // ═══════════════════════════════════════════════════════════
   // INPUT — keyboard + touch (tap = jump, swipe down = slide)
   // ═══════════════════════════════════════════════════════════
-  let ty0 = 0;
 
   function tryStartFromAnywhere() {
     if (state !== "menu") return;
@@ -1508,17 +1509,12 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
       e.preventDefault();
       if (state === "playing") doJump();
     }
-    if (e.code === "ArrowDown" || e.code === "KeyS") {
-      e.preventDefault();
-      if (state === "playing") doSlide();
-    }
   });
 
   app.canvas.addEventListener(
     "touchstart",
     (e) => {
       e.preventDefault();
-      ty0 = e.touches[0].clientY;
       tryStartFromAnywhere();
     },
     { passive: false },
@@ -1533,9 +1529,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
         return;
       }
       e.preventDefault();
-      const dy = ty0 - e.changedTouches[0].clientY;
-      if (dy < -30 && state === "playing") doSlide();
-      else if (state === "playing") doJump();
+      if (state === "playing") doJump();
       else tryStartFromAnywhere();
     },
     { passive: false },
@@ -1573,7 +1567,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     if (state === "playing" || state === "finishing") {
       runPx += speed * dt;
       distance = runPx * METERS_PER_PX;
-      speed = Math.min(BASE_SPD + Math.floor(distance / 70) * 0.35, 11.5);
+      speed = BASE_SPD;
 
       // Steps — roughly every ~18 frames on ground
       if (pl.onGround && !pl.sliding && !pl.dead) {
