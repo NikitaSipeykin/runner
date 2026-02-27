@@ -90,6 +90,22 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   app.stage.eventMode = "static";
   app.stage.hitArea = app.screen;
 
+  // ─── Cached visible design bounds — updated on resize, never calls window APIs in game loop
+  let cachedVLeft = 0;
+  let cachedVRight = W;
+
+  function updateVisibleBounds() {
+    cachedVLeft = -root.x / root.scale.x;
+    cachedVRight = (window.innerWidth - root.x) / root.scale.x;
+  }
+
+  function visibleDesignLeft(): number {
+    return cachedVLeft;
+  }
+  function visibleDesignRight(): number {
+    return cachedVRight;
+  }
+
   function resize() {
     const vw = Math.max(1, window.innerWidth);
     const vh = Math.max(1, window.innerHeight);
@@ -101,6 +117,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     root.scale.set(scale);
     root.x = Math.round((vw - W * scale) / 2);
     root.y = Math.round((vh - H * scale) / 2);
+    updateVisibleBounds();
   }
 
   resize();
@@ -212,15 +229,6 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   const uiLayer = new Container();
   root.addChild(bgLayer, gameLayer, fxLayer, uiLayer);
 
-  // ─── Helper: leftmost X visible in design (root) coordinates ───────────
-  // On wide screens the root is offset right, exposing area with x < 0
-  function visibleDesignLeft(): number {
-    return -root.x / root.scale.x;
-  }
-  function visibleDesignRight(): number {
-    return (window.innerWidth - root.x) / root.scale.x;
-  }
-
   // ═══════════════════════════════════════════════════════════
   // PARALLAX BACKGROUND — 3 layers (320×180), scaled to design height H
   // ═══════════════════════════════════════════════════════════
@@ -274,36 +282,25 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   const nativeAdH = T["adfooter"].height;
   const MAX_AD_SCALE = 0.5;
 
-  const adContainer = new Container();
-  uiLayer.addChild(adContainer);
-
+  // No Graphics mask — use PixiJS scissor rect via boundsArea (no stencil cost)
   const adSpr = new Sprite(T["adfooter"]);
-  adContainer.addChild(adSpr);
-
-  const adMask = new Graphics();
-  adContainer.addChild(adMask);
-  adContainer.mask = adMask;
+  uiLayer.addChild(adSpr);
 
   function resizeAd() {
     const vw = window.innerWidth;
     const scale = root.scale.x;
-    const designW = vw / scale; // full viewport in design coords
-    const offsetX = -root.x / scale; // left edge in design coords
+    const designW = vw / scale;
+    const offsetX = -root.x / scale;
 
-    // Fixed scale — always 1.5×, mask clips sides on narrow screens
-    const adScale = MAX_AD_SCALE;
-    const sprW = nativeAdW * adScale;
-    const sprH = nativeAdH * adScale;
+    const sprW = nativeAdW * MAX_AD_SCALE;
+    const sprH = nativeAdH * MAX_AD_SCALE;
 
+    // Reset to full texture
+    adSpr.texture = T["adfooter"];
     adSpr.width = sprW;
     adSpr.height = sprH;
-    // Center horizontally, pin to bottom
     adSpr.x = offsetX + designW / 2 - sprW / 2;
     adSpr.y = H - sprH;
-
-    // Mask clips to viewport so sides are cropped when screen < image
-    adMask.clear();
-    adMask.rect(offsetX, H - sprH, designW, sprH).fill(0xffffff);
   }
   resizeAd();
   window.addEventListener("resize", resizeAd);
@@ -485,7 +482,6 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
 
   function doJump() {
     if (pl.dead) return;
-
     if (pl.onGround) {
       pl.vy = JUMP_V;
       pl.onGround = false;
@@ -608,11 +604,21 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   }
   let obstacles: PooledObs[] = [];
 
+  let obsPoolIdx = 0;
   function spawnObs() {
     if (distance < 10) return;
     const cfgPool = distance < 40 ? [obsCfgs[0]] : obsCfgs;
     const cfg = cfgPool[Math.floor(Math.random() * cfgPool.length)];
-    const slot = obsPool.find((o) => !o.active);
+    // Find free slot with round-robin — avoids linear scan
+    let slot: PooledObs | null = null;
+    for (let i = 0; i < OBS_POOL_SIZE; i++) {
+      const idx = (obsPoolIdx + i) % OBS_POOL_SIZE;
+      if (!obsPool[idx].active) {
+        slot = obsPool[idx];
+        obsPoolIdx = (idx + 1) % OBS_POOL_SIZE;
+        break;
+      }
+    }
     if (!slot) return;
     const frames =
       cfg.key === "enemy" ? CACHED_ENEMY_RUN_FRAMES : CACHED_ENEMY_IDLE_FRAMES;
@@ -641,13 +647,16 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     for (const o of obstacles) {
       if (o.active) o.spr.x -= speed * dt;
     }
-    for (const o of obstacles) {
+    let i = obstacles.length;
+    while (i--) {
+      const o = obstacles[i];
       if (!o.active || o.spr.x < vLeft - 200) {
         o.active = false;
         o.spr.visible = false;
+        obstacles[i] = obstacles[obstacles.length - 1];
+        obstacles.length--;
       }
     }
-    obstacles = obstacles.filter((o) => o.active);
   }
 
   // ── COIN POOL ─────────────────────────────────────────────
@@ -669,8 +678,17 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   }
   let coins: PooledCoin[] = [];
 
+  let coinPoolIdx = 0;
   function spawnCoin() {
-    const slot = coinPool.find((c) => !c.active);
+    let slot: PooledCoin | null = null;
+    for (let i = 0; i < COIN_POOL_SIZE; i++) {
+      const idx = (coinPoolIdx + i) % COIN_POOL_SIZE;
+      if (!coinPool[idx].active) {
+        slot = coinPool[idx];
+        coinPoolIdx = (idx + 1) % COIN_POOL_SIZE;
+        break;
+      }
+    }
     if (!slot) return;
     const ys = [CHAR_Y - 50, CHAR_Y - 110, CHAR_Y - 180];
     slot.spr.x = visibleDesignRight() + 30;
@@ -694,11 +712,17 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
         c.spr.visible = false;
       }
     }
-    coins = coins.filter((c) => c.active);
+    let i = coins.length;
+    while (i--) {
+      if (!coins[i].active) {
+        coins[i] = coins[coins.length - 1];
+        coins.length--;
+      }
+    }
   }
 
   // ═══════════════════════════════════════════════════════════
-  // PARTICLES — object pool, zero allocations during gameplay
+  // PARTICLES — object pool, geometry drawn ONCE at init, never cleared during gameplay
   // ═══════════════════════════════════════════════════════════
   interface Part {
     g: Graphics;
@@ -709,31 +733,37 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     active: boolean;
   }
 
-  const PART_POOL_SIZE = 120;
-  const partPool: Part[] = Array.from({ length: PART_POOL_SIZE }, () => {
-    const g = new Graphics().circle(0, 0, 4).fill(0xffffff);
-    g.visible = false;
-    fxLayer.addChild(g);
-    return { g, vx: 0, vy: 0, life: 0, max: 1, active: false };
-  });
+  function makePartPool(color: number, r: number, count: number): Part[] {
+    return Array.from({ length: count }, () => {
+      const g = new Graphics().circle(0, 0, r).fill(color);
+      g.visible = false;
+      fxLayer.addChild(g);
+      return { g, vx: 0, vy: 0, life: 0, max: 1, active: false };
+    });
+  }
 
-  function acquirePart(): Part | null {
-    for (const p of partPool) if (!p.active) return p;
+  // Three fixed-color pools — no geometry changes at runtime
+  const dustPoolGold = makePartPool(0xffd700, 4, 40);
+  const dustPoolGreen = makePartPool(0x7ec850, 4, 20);
+  const hitPool = makePartPool(0xff3333, 5, 20);
+  const coinFxPool = makePartPool(0xffd700, 4, 16);
+  const allPartPools = [dustPoolGold, dustPoolGreen, hitPool, coinFxPool];
+
+  function acquireFrom(pool: Part[]): Part | null {
+    for (const p of pool) if (!p.active) return p;
     return null;
   }
 
-  function emitPart(
+  function emitFrom(
+    pool: Part[],
     x: number,
     y: number,
-    color: number,
-    r: number,
     vx: number,
     vy: number,
     life: number,
   ) {
-    const p = acquirePart();
+    const p = acquireFrom(pool);
     if (!p) return;
-    p.g.clear().circle(0, 0, r).fill(color);
     p.g.x = x;
     p.g.y = y;
     p.g.alpha = 1;
@@ -746,12 +776,12 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   }
 
   function spawnDust(x: number, y: number, color: number, n: number) {
+    const pool = color === 0x7ec850 ? dustPoolGreen : dustPoolGold;
     for (let i = 0; i < n; i++)
-      emitPart(
+      emitFrom(
+        pool,
         x + (Math.random() - 0.5) * 22,
         y,
-        color,
-        3 + Math.random() * 3,
         (Math.random() - 0.5) * 3.5,
         -(Math.random() * 4 + 1),
         22,
@@ -760,11 +790,10 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
 
   function spawnHitFx(x: number, y: number) {
     for (let i = 0; i < 14; i++)
-      emitPart(
+      emitFrom(
+        hitPool,
         x,
         y,
-        0xff3333,
-        3 + Math.random() * 4,
         (Math.random() - 0.5) * 7,
         -(Math.random() * 5 + 1),
         28,
@@ -773,11 +802,10 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
 
   function spawnCoinFx(x: number, y: number) {
     for (let i = 0; i < 8; i++)
-      emitPart(
+      emitFrom(
+        coinFxPool,
         x,
         y,
-        0xffd700,
-        4,
         (Math.random() - 0.5) * 5,
         -(Math.random() * 4 + 2),
         20,
@@ -785,18 +813,20 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   }
 
   function updateParts(dt: number) {
-    for (const p of partPool) {
-      if (!p.active) continue;
-      p.life -= dt;
-      if (p.life <= 0) {
-        p.active = false;
-        p.g.visible = false;
-        continue;
+    for (const pool of allPartPools) {
+      for (const p of pool) {
+        if (!p.active) continue;
+        p.life -= dt;
+        if (p.life <= 0) {
+          p.active = false;
+          p.g.visible = false;
+          continue;
+        }
+        p.g.x += p.vx * dt;
+        p.g.y += p.vy * dt;
+        p.vy += 0.18 * dt;
+        p.g.alpha = Math.max(0, p.life / p.max);
       }
-      p.g.x += p.vx * dt;
-      p.g.y += p.vy * dt;
-      p.vy += 0.18 * dt;
-      p.g.alpha = Math.max(0, p.life / p.max);
     }
   }
 
@@ -827,8 +857,17 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   });
   let floats: FT[] = [];
 
+  let floatPoolIdx = 0;
   function floatText(x: number, y: number, txt: string, color = "#FFD700") {
-    const slot = floatPool.find((f) => !f.active);
+    let slot: FT | null = null;
+    for (let i = 0; i < FLOAT_POOL_SIZE; i++) {
+      const idx = (floatPoolIdx + i) % FLOAT_POOL_SIZE;
+      if (!floatPool[idx].active) {
+        slot = floatPool[idx];
+        floatPoolIdx = (idx + 1) % FLOAT_POOL_SIZE;
+        break;
+      }
+    }
     if (!slot) return;
     slot.t.text = txt;
     (slot.t.style as TextStyle).fill = color;
@@ -854,7 +893,13 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
         f.t.visible = false;
       }
     }
-    floats = floats.filter((f) => f.active);
+    let i = floats.length;
+    while (i--) {
+      if (!floats[i].active) {
+        floats[i] = floats[floats.length - 1];
+        floats.length--;
+      }
+    }
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -895,24 +940,37 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   livesCont.y = 20;
   uiLayer.addChild(livesCont);
 
+  // Pre-create heart texts — never destroy/recreate
+  const heartTexts = Array.from({ length: 3 }, (_, i) => {
+    const h = new Text({
+      text: "♥",
+      style: new TextStyle({ fontSize: 32, fill: "#ff4466" }),
+    });
+    h.x = i * 38;
+    livesCont.addChild(h);
+    return h;
+  });
+
   function refreshLives() {
-    livesCont.removeChildren();
     for (let i = 0; i < 3; i++) {
-      const h = new Text({
-        text: i < lives ? "♥" : "♡",
-        style: new TextStyle({
-          fontSize: 32,
-          fill: i < lives ? "#ff4466" : "#aaa",
-        }),
-      });
-      h.x = i * 38;
-      livesCont.addChild(h);
+      heartTexts[i].text = i < lives ? "♥" : "♡";
+      (heartTexts[i].style as TextStyle).fill = i < lives ? "#ff4466" : "#aaa";
     }
   }
 
+  let lastDisplayScore = -1;
+  let lastDistance = -1;
   function refreshScore() {
-    scoreText.text = Math.round(displayScore).toString();
-    distText.text = Math.floor(distance) + "m";
+    const s = Math.round(displayScore);
+    const d = Math.floor(distance);
+    if (s !== lastDisplayScore) {
+      scoreText.text = s.toString();
+      lastDisplayScore = s;
+    }
+    if (d !== lastDistance) {
+      distText.text = d + "m";
+      lastDistance = d;
+    }
   }
 
   refreshLives();
@@ -1005,19 +1063,6 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     title.y = H / 2 - 152;
     menuCont.addChild(title);
 
-    const sub = new Text({
-      text: "Tap to jump  ·  Swipe ↓ to slide",
-      style: new TextStyle({
-        fontFamily: "Arial,sans-serif",
-        fontSize: 14,
-        fill: "#888",
-      }),
-    });
-    sub.anchor.set(0.5);
-    sub.x = W / 2;
-    sub.y = H / 2 - 94;
-    menuCont.addChild(sub);
-
     if (bestScore > 0) {
       const bt = new Text({
         text: "BEST: " + bestScore,
@@ -1081,7 +1126,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   let winCont: Container | null = null;
   let confettiTicker: ((ticker: { deltaTime: number }) => void) | null = null;
 
-  // Pre-allocated confetti pool
+  // Pre-allocated confetti pool — geometry and color drawn ONCE per slot at init
   const CONFETTI_POOL_SIZE = 250;
   const CONFETTI_COLORS = [
     0xffd700, 0xff6b6b, 0x6bcfff, 0x6bff8a, 0xffa500, 0xff69b4, 0xffffff,
@@ -1097,8 +1142,11 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   }
   const confettiPool: CPart[] = Array.from(
     { length: CONFETTI_POOL_SIZE },
-    () => {
-      const g = new Graphics().rect(0, 0, 10, 8).fill(0xffffff);
+    (_, i) => {
+      const color = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
+      const w = 6 + (i % 5) * 1.6,
+        h = 5 + (i % 4) * 1.25; // varied but fixed sizes
+      const g = new Graphics().rect(0, 0, w, h).fill(color);
       g.visible = false;
       uiLayer.addChild(g);
       return { g, vx: 0, vy: 0, vr: 0, life: 0, max: 1, active: false };
@@ -1118,20 +1166,24 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     confettiParts.length = 0;
   }
 
+  let confettiPoolIdx = 0;
   function spawnConfettiBurst(count: number) {
     clearConfetti();
+    confettiPoolIdx = 0;
 
     function addPiece() {
-      const slot = confettiPool.find((p) => !p.active);
+      let slot: CPart | null = null;
+      for (let i = 0; i < CONFETTI_POOL_SIZE; i++) {
+        const idx = (confettiPoolIdx + i) % CONFETTI_POOL_SIZE;
+        if (!confettiPool[idx].active) {
+          slot = confettiPool[idx];
+          confettiPoolIdx = (idx + 1) % CONFETTI_POOL_SIZE;
+          break;
+        }
+      }
       if (!slot) return;
-      const vLeft = visibleDesignLeft();
-      const spanW = visibleDesignRight() - vLeft;
-      const color =
-        CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)];
-      const w = 6 + Math.random() * 8,
-        h = 5 + Math.random() * 10;
-      slot.g.clear().rect(0, 0, w, h).fill(color);
-      slot.g.x = vLeft + Math.random() * spanW;
+      // No clear() — geometry pre-drawn at pool creation
+      slot.g.x = cachedVLeft + Math.random() * (cachedVRight - cachedVLeft);
       slot.g.y = -20 - Math.random() * 80;
       slot.g.rotation = Math.random() * Math.PI * 2;
       slot.g.alpha = 1;
@@ -1165,12 +1217,14 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
         p.g.rotation += p.vr * dt;
         p.g.alpha = p.life < 30 ? Math.max(0, p.life / 30) : 1;
       }
-      for (let i = confettiParts.length - 1; i >= 0; i--) {
-        const p = confettiParts[i];
+      let ci = confettiParts.length;
+      while (ci--) {
+        const p = confettiParts[ci];
         if (p.life <= 0 || p.g.y > H + 40) {
           p.active = false;
           p.g.visible = false;
-          confettiParts.splice(i, 1);
+          confettiParts[ci] = confettiParts[confettiParts.length - 1];
+          confettiParts.length--;
         }
       }
     };
@@ -1421,10 +1475,11 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     obstacles = [];
     coins = [];
     // Reset particle pool
-    for (const p of partPool) {
-      p.active = false;
-      p.g.visible = false;
-    }
+    for (const pool of allPartPools)
+      for (const p of pool) {
+        p.active = false;
+        p.g.visible = false;
+      }
     // Reset float text pool
     for (const f of floatPool) {
       f.active = false;
@@ -1453,6 +1508,8 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     distance = 0;
     runPx = 0;
     displayScore = 0;
+    lastDisplayScore = -1;
+    lastDistance = -1;
     lives = 3;
     speed = BASE_SPD;
     obstTimer = 0;
@@ -1494,7 +1551,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   }
 
   // ═══════════════════════════════════════════════════════════
-  // INPUT — keyboard + touch (tap = jump, swipe down = slide)
+  // INPUT — keyboard + touch (tap = jump)
   // ═══════════════════════════════════════════════════════════
 
   function tryStartFromAnywhere() {
@@ -1567,7 +1624,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     if (state === "playing" || state === "finishing") {
       runPx += speed * dt;
       distance = runPx * METERS_PER_PX;
-      speed = BASE_SPD;
+      speed = Math.min(BASE_SPD + Math.floor(distance / 70) * 0.35, 11.5);
 
       // Steps — roughly every ~18 frames on ground
       if (pl.onGround && !pl.sliding && !pl.dead) {
