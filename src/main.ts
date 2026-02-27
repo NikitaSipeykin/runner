@@ -180,9 +180,22 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     [ROW_DEATH2]: 6,
   };
 
-  function makeCharAnim(row: number, spd = 0.15): AnimatedSprite {
+  // Pre-cache every character animation row — zero allocations during gameplay
+  const CACHED_CHAR_FRAMES: Record<number, Texture[]> = {};
+  for (const row of [
+    ROW_IDLE,
+    ROW_RUN,
+    ROW_JUMP,
+    ROW_FALL,
+    ROW_DEATH1,
+    ROW_DEATH2,
+  ]) {
     const count = ROW_FRAME_COUNTS[row] ?? CHAR_COLS;
-    const a = new AnimatedSprite(charFrames(row, count));
+    CACHED_CHAR_FRAMES[row] = charFrames(row, count);
+  }
+
+  function makeCharAnim(row: number, spd = 0.15): AnimatedSprite {
+    const a = new AnimatedSprite(CACHED_CHAR_FRAMES[row]);
     a.animationSpeed = spd;
     a.anchor.set(0.5, 1);
     a.scale.set(CHAR_SCALE);
@@ -389,21 +402,36 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   const sndHurt = new Audio("/assets/player_hurt.MP3");
   sndHurt.volume = 0.9;
 
-  const sndStep = new Audio("/assets/step.MP3");
-  sndStep.volume = 0.45;
-
   const sndWin = new Audio("/assets/win.mp3");
   sndWin.volume = 0.8;
 
+  // Pre-allocated audio pools — no allocations during gameplay
+  const STEP_POOL_SIZE = 4;
+  const HURT_POOL_SIZE = 3;
+  const stepPool = Array.from({ length: STEP_POOL_SIZE }, () => {
+    const a = new Audio("/assets/step.MP3");
+    a.volume = 0.45;
+    return a;
+  });
+  const hurtPool = Array.from({ length: HURT_POOL_SIZE }, () => {
+    const a = new Audio("/assets/player_hurt.MP3");
+    a.volume = 0.9;
+    return a;
+  });
+  let stepIdx = 0,
+    hurtIdx = 0;
+
   function playHurt() {
-    const s = sndHurt.cloneNode() as HTMLAudioElement;
-    s.volume = 0.9;
+    const s = hurtPool[hurtIdx % HURT_POOL_SIZE];
+    hurtIdx++;
+    s.currentTime = 0;
     s.play().catch(() => {});
   }
 
   function playStep() {
-    const s = sndStep.cloneNode() as HTMLAudioElement;
-    s.volume = 0.45;
+    const s = stepPool[stepIdx % STEP_POOL_SIZE];
+    stepIdx++;
+    s.currentTime = 0;
     s.play().catch(() => {});
   }
 
@@ -691,7 +719,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   }
 
   // ═══════════════════════════════════════════════════════════
-  // PARTICLES
+  // PARTICLES — object pool, zero allocations during gameplay
   // ═══════════════════════════════════════════════════════════
   interface Part {
     g: Graphics;
@@ -699,74 +727,98 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     vy: number;
     life: number;
     max: number;
+    active: boolean;
   }
-  let parts: Part[] = [];
+
+  const PART_POOL_SIZE = 120;
+  const partPool: Part[] = Array.from({ length: PART_POOL_SIZE }, () => {
+    const g = new Graphics().circle(0, 0, 4).fill(0xffffff);
+    g.visible = false;
+    fxLayer.addChild(g);
+    return { g, vx: 0, vy: 0, life: 0, max: 1, active: false };
+  });
+
+  function acquirePart(): Part | null {
+    for (const p of partPool) if (!p.active) return p;
+    return null;
+  }
+
+  function emitPart(
+    x: number,
+    y: number,
+    color: number,
+    r: number,
+    vx: number,
+    vy: number,
+    life: number,
+  ) {
+    const p = acquirePart();
+    if (!p) return;
+    p.g.clear().circle(0, 0, r).fill(color);
+    p.g.x = x;
+    p.g.y = y;
+    p.g.alpha = 1;
+    p.g.visible = true;
+    p.vx = vx;
+    p.vy = vy;
+    p.life = life;
+    p.max = life;
+    p.active = true;
+  }
 
   function spawnDust(x: number, y: number, color: number, n: number) {
-    for (let i = 0; i < n; i++) {
-      const g = new Graphics().circle(0, 0, 3 + Math.random() * 3).fill(color);
-      g.x = x + (Math.random() - 0.5) * 22;
-      g.y = y;
-      fxLayer.addChild(g);
-      parts.push({
-        g,
-        vx: (Math.random() - 0.5) * 3.5,
-        vy: -(Math.random() * 4 + 1),
-        life: 22,
-        max: 22,
-      });
-    }
+    for (let i = 0; i < n; i++)
+      emitPart(
+        x + (Math.random() - 0.5) * 22,
+        y,
+        color,
+        3 + Math.random() * 3,
+        (Math.random() - 0.5) * 3.5,
+        -(Math.random() * 4 + 1),
+        22,
+      );
   }
 
   function spawnHitFx(x: number, y: number) {
-    for (let i = 0; i < 14; i++) {
-      const g = new Graphics()
-        .circle(0, 0, 3 + Math.random() * 4)
-        .fill(0xff3333);
-      g.x = x;
-      g.y = y;
-      fxLayer.addChild(g);
-      parts.push({
-        g,
-        vx: (Math.random() - 0.5) * 7,
-        vy: -(Math.random() * 5 + 1),
-        life: 28,
-        max: 28,
-      });
-    }
+    for (let i = 0; i < 14; i++)
+      emitPart(
+        x,
+        y,
+        0xff3333,
+        3 + Math.random() * 4,
+        (Math.random() - 0.5) * 7,
+        -(Math.random() * 5 + 1),
+        28,
+      );
   }
 
   function spawnCoinFx(x: number, y: number) {
-    for (let i = 0; i < 8; i++) {
-      const g = new Graphics().circle(0, 0, 4).fill(0xffd700);
-      g.x = x;
-      g.y = y;
-      fxLayer.addChild(g);
-      parts.push({
-        g,
-        vx: (Math.random() - 0.5) * 5,
-        vy: -(Math.random() * 4 + 2),
-        life: 20,
-        max: 20,
-      });
-    }
+    for (let i = 0; i < 8; i++)
+      emitPart(
+        x,
+        y,
+        0xffd700,
+        4,
+        (Math.random() - 0.5) * 5,
+        -(Math.random() * 4 + 2),
+        20,
+      );
   }
 
   function updateParts(dt: number) {
-    for (const p of parts) {
+    for (const p of partPool) {
+      if (!p.active) continue;
       p.life -= dt;
+      if (p.life <= 0) {
+        p.active = false;
+        p.g.visible = false;
+        continue;
+      }
       p.g.x += p.vx * dt;
       p.g.y += p.vy * dt;
       p.vy += 0.18 * dt;
       p.g.alpha = Math.max(0, p.life / p.max);
     }
-    parts
-      .filter((p) => p.life <= 0)
-      .forEach((p) => {
-        fxLayer.removeChild(p.g);
-        p.g.destroy();
-      });
-    parts = parts.filter((p) => p.life > 0);
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -1366,17 +1418,17 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
         c.spr = null;
       }
     });
-    parts.forEach((p) => {
-      fxLayer.removeChild(p.g);
-      p.g.destroy();
-    });
+    // Reset particle pool — hide all active particles
+    for (const p of partPool) {
+      p.active = false;
+      p.g.visible = false;
+    }
     floats.forEach((f) => {
       uiLayer.removeChild(f.t);
       f.t.destroy();
     });
     obstacles = [];
     coins = [];
-    parts = [];
     floats = [];
     clearConfetti();
   }
