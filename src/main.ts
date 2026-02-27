@@ -296,7 +296,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   const finishSpr = new Sprite(T["finish"]);
   finishSpr.anchor.set(0.5, 1);
   finishSpr.scale.set(0.9);
-  finishSpr.y = CHAR_Y + 40;
+  finishSpr.y = CHAR_Y + 45;
   const finishCrossX = PLAYER_X - finishSpr.width * 0.35;
   const finishStartX = finishCrossX + totalRunPx;
   finishSpr.x = finishStartX;
@@ -356,11 +356,14 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   document.addEventListener("keydown", unlockMusic, { once: true });
 
   // Hurt/step: use lowercase extensions for compatibility
-  const sndHurt = new Audio("/assets/player_hurt.mp3");
+  const sndHurt = new Audio("/assets/player_hurt.MP3");
   sndHurt.volume = 0.9;
 
-  const sndStep = new Audio("/assets/step.mp3");
+  const sndStep = new Audio("/assets/step.MP3");
   sndStep.volume = 0.45;
+
+  const sndWin = new Audio("/assets/win.mp3");
+  sndWin.volume = 0.8;
 
   function playHurt() {
     const s = sndHurt.cloneNode() as HTMLAudioElement;
@@ -1108,6 +1111,8 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
       localStorage.setItem("runnerBest", String(bestScore));
     }
     stopMusic();
+    sndWin.currentTime = 0;
+    sndWin.play().catch(() => {});
     state = "gameover";
     winCont = new Container();
     uiLayer.addChild(winCont);
@@ -1455,6 +1460,8 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   app.canvas.addEventListener(
     "touchend",
     (e) => {
+      // On gameover/win screens, let Pixi handle button taps natively — do NOT preventDefault
+      if (state === "gameover") return;
       e.preventDefault();
       const dy = ty0 - e.changedTouches[0].clientY;
       if (dy < -30 && state === "playing") doSlide();
@@ -1468,9 +1475,10 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   app.canvas.addEventListener("pointerdown", (e) => {
     if (state === "playing") {
       if (e.pointerType === "mouse") doJump();
-    } else {
+    } else if (state === "menu") {
       tryStartFromAnywhere();
     }
+    // on gameover let Pixi button handlers fire
   });
 
   // Pixi pointer events (helps WebViews capture the first interaction reliably)
