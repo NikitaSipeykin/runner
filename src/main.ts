@@ -142,50 +142,47 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     );
   }
 
-  function enemyRunFrames(): Texture[] {
-    const src = T["enemy_run"].source;
-    return Array.from(
-      { length: ENEMY_RUN_COLS },
-      (_, i) =>
-        new Texture({
-          source: src,
-          frame: new Rectangle(i * ENEMY_FW, 0, ENEMY_FW, ENEMY_FH),
-        }),
-    );
-  }
-
-  function enemyIdleFrames(): Texture[] {
-    const src = T["enemy_idle"].source;
-    return Array.from(
-      { length: ENEMY_IDLE_COLS },
-      (_, i) =>
-        new Texture({
-          source: src,
-          frame: new Rectangle(i * ENEMY_FW, 0, ENEMY_FW, ENEMY_FH),
-        }),
-    );
-  }
-
   // MonedaD.png: 80×16, 5 cols → frame 16×16
   const COIN_COLS = 5;
   const COIN_FW = 16;
   const COIN_FH = 16;
-  const COIN_SCALE = 4.6; // bigger money for stronger gameplay presence
+  const COIN_SCALE = 4.6;
 
-  function coinFrames(): Texture[] {
-    const src = T["coin"].source;
-    return Array.from(
-      { length: COIN_COLS },
-      (_, i) =>
-        new Texture({
-          source: src,
-          frame: new Rectangle(i * COIN_FW, 0, COIN_FW, COIN_FH),
-        }),
-    );
-  }
+  // ── PRE-CACHED FRAME ARRAYS (created once, reused on every spawn) ───────
+  const CACHED_ENEMY_RUN_FRAMES: Texture[] = Array.from(
+    { length: ENEMY_RUN_COLS },
+    (_, i) =>
+      new Texture({
+        source: T["enemy_run"].source,
+        frame: new Rectangle(i * ENEMY_FW, 0, ENEMY_FW, ENEMY_FH),
+      }),
+  );
+  const CACHED_ENEMY_IDLE_FRAMES: Texture[] = Array.from(
+    { length: ENEMY_IDLE_COLS },
+    (_, i) =>
+      new Texture({
+        source: T["enemy_idle"].source,
+        frame: new Rectangle(i * ENEMY_FW, 0, ENEMY_FW, ENEMY_FH),
+      }),
+  );
+  const CACHED_COIN_FRAMES: Texture[] = Array.from(
+    { length: COIN_COLS },
+    (_, i) =>
+      new Texture({
+        source: T["coin"].source,
+        frame: new Rectangle(i * COIN_FW, 0, COIN_FW, COIN_FH),
+      }),
+  );
+
+  const ROW_FRAME_COUNTS: Record<number, number> = {
+    [ROW_IDLE]: 6,
+    [ROW_DEATH1]: 6,
+    [ROW_DEATH2]: 6,
+  };
 
   function makeCharAnim(row: number, spd = 0.15): AnimatedSprite {
-    const a = new AnimatedSprite(charFrames(row));
+    const count = ROW_FRAME_COUNTS[row] ?? CHAR_COLS;
+    const a = new AnimatedSprite(charFrames(row, count));
     a.animationSpeed = spd;
     a.anchor.set(0.5, 1);
     a.scale.set(CHAR_SCALE);
@@ -259,12 +256,22 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     floorTiles.push(s);
   }
 
-  // Ad banner
+  // Ad banner — adaptive to actual viewport
   const adSpr = new Sprite(T["adfooter"]);
-  adSpr.width = W;
   adSpr.height = 56;
   adSpr.y = H - 56;
   uiLayer.addChild(adSpr);
+
+  function resizeAd() {
+    const vw = window.innerWidth;
+    const scale = root.scale.x;
+    // Convert real viewport width to design-space width
+    adSpr.width = vw / scale;
+    adSpr.x = -root.x / scale;
+  }
+  resizeAd();
+  window.addEventListener("resize", resizeAd);
+  window.addEventListener("orientationchange", resizeAd);
 
   // ═══════════════════════════════════════════════════════════
   // GAME STATE
@@ -297,7 +304,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   finishSpr.anchor.set(0.5, 1);
   finishSpr.scale.set(0.9);
   finishSpr.y = CHAR_Y + 45;
-  const finishCrossX = PLAYER_X - finishSpr.width * 0.35;
+  const finishCrossX = PLAYER_X;
   const finishStartX = finishCrossX + totalRunPx;
   finishSpr.x = finishStartX;
   gameLayer.addChild(finishSpr);
@@ -504,6 +511,10 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
             pl.curRow = -1;
             switchAnim(ROW_DEATH2, 0.12);
             pl.deathPhase = 2;
+            playerAnim.loop = false;
+            playerAnim.onComplete = () => {
+              playerAnim.gotoAndStop(playerAnim.totalFrames - 1);
+            };
           }
         }, 600);
       }
@@ -568,10 +579,10 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
 
     let spr: AnimatedSprite;
     if (cfg.key === "enemy") {
-      spr = new AnimatedSprite(enemyRunFrames());
+      spr = new AnimatedSprite(CACHED_ENEMY_RUN_FRAMES);
       spr.animationSpeed = ENEMY_ANIM_SPD;
     } else {
-      spr = new AnimatedSprite(enemyIdleFrames());
+      spr = new AnimatedSprite(CACHED_ENEMY_IDLE_FRAMES);
       spr.animationSpeed = ENEMY_ANIM_SPD * 0.8;
       spr.scale.x = -ENEMY_SCALE;
     }
@@ -625,7 +636,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
 
   function spawnCoin() {
     const ys = [CHAR_Y - 50, CHAR_Y - 110, CHAR_Y - 180];
-    const a = new AnimatedSprite(coinFrames());
+    const a = new AnimatedSprite(CACHED_COIN_FRAMES);
     a.animationSpeed = 0.14;
     a.play();
     a.anchor.set(0.5);
@@ -781,24 +792,6 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   }
 
   // ═══════════════════════════════════════════════════════════
-  // FLASH
-  // ═══════════════════════════════════════════════════════════
-  const flashG = new Graphics().rect(0, 0, W, H).fill(0xff0000);
-  flashG.alpha = 0;
-  uiLayer.addChild(flashG);
-  let flashT = 0;
-  function doFlash(a = 0.42) {
-    flashG.alpha = a;
-    flashT = 14;
-  }
-  function updateFlash(dt: number) {
-    if (flashT > 0) {
-      flashT -= dt;
-      flashG.alpha = Math.max(0, flashG.alpha - 0.045 * dt);
-    }
-  }
-
-  // ═══════════════════════════════════════════════════════════
   // UI
   // ═══════════════════════════════════════════════════════════
   const scoreText = new Text({
@@ -900,7 +893,6 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     refreshLives();
     playHurt();
     spawnHitFx(pl.x, pl.y - 80);
-    doFlash();
     if (lives <= 0) {
       pl.dead = true;
       pl.vy = -8;
@@ -1535,7 +1527,6 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
       updatePlayer(dt);
       updateParts(dt);
       updateFloats(dt);
-      updateFlash(dt);
       refreshScore();
 
       if (winAnimTimer >= 65) {
@@ -1572,14 +1563,17 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
         finishCrossed = true;
         state = "win_anim";
         winAnimTimer = 0;
+        pl.dead = true;
+        pl.deathPhase = 2;
         pl.curRow = -1;
         switchAnim(ROW_IDLE, 0.12);
         spawnDust(pl.x, CHAR_Y, 0xffd700, 18);
       }
     }
 
-    // Spawns only while actively playing (not during finishing/dead)
-    if (state === "playing") {
+    // Spawns only while actively playing — stop well before finish so no mob blocks the gate
+    const SPAWN_STOP_DIST = WIN_DIST * 0.72; // stop spawns at 72% of run
+    if (state === "playing" && distance < SPAWN_STOP_DIST) {
       const interval = Math.max(52, 118 - Math.floor(distance / 35) * 3);
       obstTimer += dt;
       if (obstTimer >= interval) {
@@ -1598,7 +1592,6 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     updateCoins(dt);
     updateParts(dt);
     updateFloats(dt);
-    updateFlash(dt);
 
     if (state === "playing" || state === "finishing") {
       checkCollisions();
