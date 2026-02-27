@@ -121,7 +121,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     { alias: "fail", src: "/assets/fail.png" },
     { alias: "finish", src: "/assets/finish.png" },
     { alias: "hand", src: "/assets/hand.png" },
-    { alias: "adfooter", src: "/assets/adfooter.webp" },
+    { alias: "adfooter", src: "/assets/adfooter.png" },
     { alias: "floor", src: "/assets/floor.png" },
   ];
   for (const a of ASSET_LIST) Assets.add(a);
@@ -256,18 +256,40 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     floorTiles.push(s);
   }
 
-  // Ad banner — adaptive to actual viewport
+  // Ad banner — centered, max 1.5× native height, sides cropped if viewport is narrower
+  const nativeAdW = T["adfooter"].width;
+  const nativeAdH = T["adfooter"].height;
+
+  const adContainer = new Container();
+  uiLayer.addChild(adContainer);
+
   const adSpr = new Sprite(T["adfooter"]);
-  adSpr.height = 56;
-  adSpr.y = H - 56;
-  uiLayer.addChild(adSpr);
+  adContainer.addChild(adSpr);
+
+  const adMask = new Graphics();
+  adContainer.addChild(adMask);
+  adContainer.mask = adMask;
 
   function resizeAd() {
     const vw = window.innerWidth;
     const scale = root.scale.x;
-    // Convert real viewport width to design-space width
-    adSpr.width = vw / scale;
-    adSpr.x = -root.x / scale;
+    const designW = vw / scale; // full viewport in design coords
+    const offsetX = -root.x / scale; // left edge in design coords
+
+    // Scale: height capped at 1.5× native
+    const adScale = Math.min(designW / nativeAdW);
+    const sprW = nativeAdW * adScale;
+    const sprH = nativeAdH * adScale;
+
+    adSpr.width = sprW;
+    adSpr.height = sprH;
+    // Center horizontally, pin to bottom
+    adSpr.x = offsetX + designW / 2 - sprW / 2;
+    adSpr.y = H - sprH;
+
+    // Mask clips to viewport so sides are cropped when screen < image
+    adMask.clear();
+    adMask.rect(offsetX, H - sprH, designW, sprH).fill(0xffffff);
   }
   resizeAd();
   window.addEventListener("resize", resizeAd);
