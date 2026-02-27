@@ -259,6 +259,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   // Ad banner — centered, max 1.5× native height, sides cropped if viewport is narrower
   const nativeAdW = T["adfooter"].width;
   const nativeAdH = T["adfooter"].height;
+  const MAX_AD_SCALE = 0.5;
 
   const adContainer = new Container();
   uiLayer.addChild(adContainer);
@@ -273,11 +274,11 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   function resizeAd() {
     const vw = window.innerWidth;
     const scale = root.scale.x;
-    const designW = vw / scale; // full viewport in design coords
-    const offsetX = -root.x / scale; // left edge in design coords
+    const designW = vw / scale;       // full viewport in design coords
+    const offsetX = -root.x / scale;  // left edge in design coords
 
-    // Scale: height capped at 1.5× native
-    const adScale = Math.min(designW / nativeAdW);
+    // Fixed scale — always 1.5×, mask clips sides on narrow screens
+    const adScale = MAX_AD_SCALE;
     const sprW = nativeAdW * adScale;
     const sprH = nativeAdH * adScale;
 
