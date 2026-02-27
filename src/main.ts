@@ -1460,8 +1460,11 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   app.canvas.addEventListener(
     "touchend",
     (e) => {
-      // On gameover/win screens, let Pixi handle button taps natively — do NOT preventDefault
-      if (state === "gameover") return;
+      // On gameover/win screens — tap anywhere opens CTA
+      if (state === "gameover") {
+        openCta();
+        return;
+      }
       e.preventDefault();
       const dy = ty0 - e.changedTouches[0].clientY;
       if (dy < -30 && state === "playing") doSlide();
@@ -1477,8 +1480,9 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
       if (e.pointerType === "mouse") doJump();
     } else if (state === "menu") {
       tryStartFromAnywhere();
+    } else if (state === "gameover" && e.pointerType === "mouse") {
+      openCta();
     }
-    // on gameover let Pixi button handlers fire
   });
 
   // Pixi pointer events (helps WebViews capture the first interaction reliably)
