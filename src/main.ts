@@ -1698,7 +1698,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     }
 
     // Spawns only while actively playing — stop well before finish so no mob blocks the gate
-    const SPAWN_STOP_DIST = WIN_DIST * 0.72; // stop spawns at 72% of run
+    const SPAWN_STOP_DIST = WIN_DIST * 0.82; // stop spawns at 72% of run
     if (state === "playing" && distance < SPAWN_STOP_DIST) {
       const interval = Math.max(52, 118 - Math.floor(distance / 35) * 3);
       obstTimer += dt;
