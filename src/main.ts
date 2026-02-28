@@ -74,9 +74,9 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     width: 1,
     height: 1,
     backgroundColor: 0x87ceeb,
-    resolution: Math.min(window.devicePixelRatio || 1, 2),
-    autoDensity: true,
-    antialias: true,
+    resolution: 1,
+    autoDensity: false,
+    antialias: false,
   });
   const container = document.getElementById("pixi-container")!;
   container.appendChild(app.canvas);
@@ -158,11 +158,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
         }),
     );
   }
-  app.ticker.add(() => {
-    if (Math.random() < 0.02) {
-      console.log("FPS:", app.ticker.FPS.toFixed(1));
-    }
-  });
+
   // MonedaD.png: 80×16, 5 cols → frame 16×16
   const COIN_COLS = 5;
   const COIN_FW = 16;
@@ -466,6 +462,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     sliding: false,
     curRow: ROW_RUN,
     deathPhase: 0, // 0=not started, 1=part1, 2=part2
+    deathTimer: 0, // replaces setTimeout
   };
 
   function switchAnim(row: number, spd = 0.15) {
@@ -486,25 +483,34 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
 
   function doJump() {
     if (pl.dead) return;
+
     if (pl.onGround) {
       pl.vy = JUMP_V;
       pl.onGround = false;
       pl.jumps = 1;
       switchAnim(ROW_JUMP, 0.2);
-      // spawnDust(pl.x, CHAR_Y, 0x7ec850, 7);
+      spawnDust(pl.x, CHAR_Y, 0x7ec850, 7);
     } else if (pl.jumps === 1) {
       pl.vy = JUMP2_V;
       pl.jumps = 2;
-      // spawnDust(pl.x, pl.y, 0xffd700, 10);
+      spawnDust(pl.x, pl.y, 0xffd700, 10);
     }
   }
 
+  // Pre-allocated rect objects — reused every frame, zero allocations during collision checks
+  const _pbRect = { x: 0, y: 0, w: 0, h: 0 };
+  const _obRect = { x: 0, y: 0, w: 0, h: 0 };
+  const _cbRect = { x: 0, y: 0, w: 0, h: 0 };
+
   function playerHitbox() {
-    // Real content is smaller than the sprite frame: ~20×31 inside 56×56
     const sk = pl.sliding ? 0.55 : 1.0;
     const pw = CHAR_FW * CHAR_SCALE * 0.37;
     const ph = CHAR_FH * CHAR_SCALE * 0.55 * sk;
-    return { x: pl.x - pw / 2, y: pl.y - ph, w: pw, h: ph };
+    _pbRect.x = pl.x - pw / 2;
+    _pbRect.y = pl.y - ph;
+    _pbRect.w = pw;
+    _pbRect.h = ph;
+    return _pbRect;
   }
 
   function updatePlayer(dt: number) {
@@ -525,24 +531,25 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
       }
     }
 
-    // Death animation in 2 phases
+    // Death animation in 2 phases — no setTimeout, uses deathTimer counter
     if (pl.dead) {
       if (pl.deathPhase === 0) {
         pl.deathPhase = 1;
+        pl.deathTimer = 0;
         pl.curRow = -1;
         switchAnim(ROW_DEATH1, 0.14);
-        // After ~8 frames switch to part2
-        setTimeout(() => {
-          if (pl.dead) {
-            pl.curRow = -1;
-            switchAnim(ROW_DEATH2, 0.12);
-            pl.deathPhase = 2;
-            playerAnim.loop = false;
-            playerAnim.onComplete = () => {
-              playerAnim.gotoAndStop(playerAnim.totalFrames - 1);
-            };
-          }
-        }, 600);
+      } else if (pl.deathPhase === 1) {
+        pl.deathTimer += dt;
+        if (pl.deathTimer >= 36) {
+          // ~600ms at 60fps
+          pl.deathPhase = 2;
+          pl.curRow = -1;
+          switchAnim(ROW_DEATH2, 0.12);
+          playerAnim.loop = false;
+          playerAnim.onComplete = () => {
+            playerAnim.gotoAndStop(playerAnim.totalFrames - 1);
+          };
+        }
       }
     }
 
@@ -643,7 +650,11 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   function obsHitbox(o: PooledObs) {
     const w = o.spr.width * o.hw,
       h = o.spr.height * o.hh;
-    return { x: o.spr.x - w / 2, y: o.spr.y - h, w, h };
+    _obRect.x = o.spr.x - w / 2;
+    _obRect.y = o.spr.y - h;
+    _obRect.w = w;
+    _obRect.h = h;
+    return _obRect;
   }
 
   function updateObs(dt: number) {
@@ -753,86 +764,86 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   const coinFxPool = makePartPool(0xffd700, 4, 16);
   const allPartPools = [dustPoolGold, dustPoolGreen, hitPool, coinFxPool];
 
-  // function acquireFrom(pool: Part[]): Part | null {
-  //   for (const p of pool) if (!p.active) return p;
-  //   return null;
-  // }
+  function acquireFrom(pool: Part[]): Part | null {
+    for (const p of pool) if (!p.active) return p;
+    return null;
+  }
 
-  // function emitFrom(
-  //   pool: Part[],
-  //   x: number,
-  //   y: number,
-  //   vx: number,
-  //   vy: number,
-  //   life: number,
-  // ) {
-  //   const p = acquireFrom(pool);
-  //   if (!p) return;
-  //   p.g.x = x;
-  //   p.g.y = y;
-  //   p.g.alpha = 1;
-  //   p.g.visible = true;
-  //   p.vx = vx;
-  //   p.vy = vy;
-  //   p.life = life;
-  //   p.max = life;
-  //   p.active = true;
-  // }
+  function emitFrom(
+    pool: Part[],
+    x: number,
+    y: number,
+    vx: number,
+    vy: number,
+    life: number,
+  ) {
+    const p = acquireFrom(pool);
+    if (!p) return;
+    p.g.x = x;
+    p.g.y = y;
+    p.g.alpha = 1;
+    p.g.visible = true;
+    p.vx = vx;
+    p.vy = vy;
+    p.life = life;
+    p.max = life;
+    p.active = true;
+  }
 
-  // function spawnDust(x: number, y: number, color: number, n: number) {
-  //   // const pool = color === 0x7ec850 ? dustPoolGreen : dustPoolGold;
-  //   // for (let i = 0; i < n; i++)
-  //   //   emitFrom(
-  //   //     pool,
-  //   //     x + (Math.random() - 0.5) * 22,
-  //   //     y,
-  //   //     (Math.random() - 0.5) * 3.5,
-  //   //     -(Math.random() * 4 + 1),
-  //   //     22,
-  //   //   );
-  // }
+  function spawnDust(x: number, y: number, color: number, n: number) {
+    const pool = color === 0x7ec850 ? dustPoolGreen : dustPoolGold;
+    for (let i = 0; i < n; i++)
+      emitFrom(
+        pool,
+        x + (Math.random() - 0.5) * 22,
+        y,
+        (Math.random() - 0.5) * 3.5,
+        -(Math.random() * 4 + 1),
+        22,
+      );
+  }
 
-  // function spawnHitFx(x: number, y: number) {
-  //   // for (let i = 0; i < 14; i++)
-  //   //   emitFrom(
-  //   //     hitPool,
-  //   //     x,
-  //   //     y,
-  //   //     (Math.random() - 0.5) * 7,
-  //   //     -(Math.random() * 5 + 1),
-  //   //     28,
-  //   //   );
-  // }
+  function spawnHitFx(x: number, y: number) {
+    for (let i = 0; i < 14; i++)
+      emitFrom(
+        hitPool,
+        x,
+        y,
+        (Math.random() - 0.5) * 7,
+        -(Math.random() * 5 + 1),
+        28,
+      );
+  }
 
-  // function spawnCoinFx(x: number, y: number) {
-  //   // for (let i = 0; i < 8; i++)
-  //   //   emitFrom(
-  //   //     coinFxPool,
-  //   //     x,
-  //   //     y,
-  //   //     (Math.random() - 0.5) * 5,
-  //   //     -(Math.random() * 4 + 2),
-  //   //     20,
-  //   //   );
-  // }
+  function spawnCoinFx(x: number, y: number) {
+    for (let i = 0; i < 8; i++)
+      emitFrom(
+        coinFxPool,
+        x,
+        y,
+        (Math.random() - 0.5) * 5,
+        -(Math.random() * 4 + 2),
+        20,
+      );
+  }
 
-  // function updateParts(dt: number) {
-  //   // for (const pool of allPartPools) {
-  //   //   for (const p of pool) {
-  //   //     if (!p.active) continue;
-  //   //     p.life -= dt;
-  //   //     if (p.life <= 0) {
-  //   //       p.active = false;
-  //   //       p.g.visible = false;
-  //   //       continue;
-  //   //     }
-  //   //     p.g.x += p.vx * dt;
-  //   //     p.g.y += p.vy * dt;
-  //   //     p.vy += 0.18 * dt;
-  //   //     p.g.alpha = Math.max(0, p.life / p.max);
-  //   //   }
-  //   // }
-  // }
+  function updateParts(dt: number) {
+    for (const pool of allPartPools) {
+      for (const p of pool) {
+        if (!p.active) continue;
+        p.life -= dt;
+        if (p.life <= 0) {
+          p.active = false;
+          p.g.visible = false;
+          continue;
+        }
+        p.g.x += p.vx * dt;
+        p.g.y += p.vy * dt;
+        p.vy += 0.18 * dt;
+        p.g.alpha = Math.max(0, p.life / p.max);
+      }
+    }
+  }
 
   // ── FLOAT TEXT POOL ───────────────────────────────────────
   interface FT {
@@ -842,49 +853,49 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     max: number;
     active: boolean;
   }
-  // const FLOAT_POOL_SIZE = 8;
-  // const floatPool: FT[] = Array.from({ length: FLOAT_POOL_SIZE }, () => {
-  //   const t = new Text({
-  //     text: "",
-  //     style: new TextStyle({
-  //       fontFamily: "Arial Black",
-  //       fontSize: 22,
-  //       fontWeight: "bold",
-  //       fill: "#FFD700",
-  //       stroke: { color: "#333", width: 3 },
-  //     }),
-  //   });
-  //   t.anchor.set(0.5);
-  //   t.visible = false;
-  //   uiLayer.addChild(t);
-  //   return { t, vy: 0, life: 0, max: 1, active: false };
-  // });
+  const FLOAT_POOL_SIZE = 8;
+  const floatPool: FT[] = Array.from({ length: FLOAT_POOL_SIZE }, () => {
+    const t = new Text({
+      text: "",
+      style: new TextStyle({
+        fontFamily: "Arial Black",
+        fontSize: 22,
+        fontWeight: "bold",
+        fill: "#FFD700",
+        stroke: { color: "#333", width: 3 },
+      }),
+    });
+    t.anchor.set(0.5);
+    t.visible = false;
+    uiLayer.addChild(t);
+    return { t, vy: 0, life: 0, max: 1, active: false };
+  });
   let floats: FT[] = [];
 
-  // let floatPoolIdx = 0;
-  // function floatText(x: number, y: number, txt: string, color = "#FFD700") {
-  //   let slot: FT | null = null;
-  //   for (let i = 0; i < FLOAT_POOL_SIZE; i++) {
-  //     const idx = (floatPoolIdx + i) % FLOAT_POOL_SIZE;
-  //     // if (!floatPool[idx].active) {
-  //     //   slot = floatPool[idx];
-  //     //   floatPoolIdx = (idx + 1) % FLOAT_POOL_SIZE;
-  //     //   break;
-  //     // }
-  //   }
-  //   if (!slot) return;
-  //   // slot.t.text = txt;
-  //   // (slot.t.style as TextStyle).fill = color;
-  //   // slot.t.x = x;
-  //   // slot.t.y = y;
-  //   // slot.t.alpha = 1;
-  //   // slot.t.visible = true;
-  //   // slot.vy = -2.2;
-  //   // slot.life = 38;
-  //   // slot.max = 38;
-  //   // slot.active = true;
-  //   // floats.push(slot);
-  // }
+  let floatPoolIdx = 0;
+  function floatText(x: number, y: number, txt: string, color = "#FFD700") {
+    let slot: FT | null = null;
+    for (let i = 0; i < FLOAT_POOL_SIZE; i++) {
+      const idx = (floatPoolIdx + i) % FLOAT_POOL_SIZE;
+      if (!floatPool[idx].active) {
+        slot = floatPool[idx];
+        floatPoolIdx = (idx + 1) % FLOAT_POOL_SIZE;
+        break;
+      }
+    }
+    if (!slot) return;
+    slot.t.text = txt;
+    (slot.t.style as TextStyle).fill = color;
+    slot.t.x = x;
+    slot.t.y = y;
+    slot.t.alpha = 1;
+    slot.t.visible = true;
+    slot.vy = -2.2;
+    slot.life = 38;
+    slot.max = 38;
+    slot.active = true;
+    floats.push(slot);
+  }
 
   function updateFloats(dt: number) {
     for (const f of floats) {
@@ -972,7 +983,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
       lastDisplayScore = s;
     }
     if (d !== lastDistance) {
-      distText.text = d + "m";
+      distText.text = `${d}m`;
       lastDistance = d;
     }
   }
@@ -1004,14 +1015,16 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     for (const c of coins) {
       if (!c.active || !c.spr) continue;
       const r = c.spr.width / 2 + 4;
-      if (
-        overlaps(pb, { x: c.spr.x - r, y: c.spr.y - r, w: r * 2, h: r * 2 })
-      ) {
+      _cbRect.x = c.spr.x - r;
+      _cbRect.y = c.spr.y - r;
+      _cbRect.w = r * 2;
+      _cbRect.h = r * 2;
+      if (overlaps(pb, _cbRect)) {
         c.active = false;
         c.spr.visible = false;
         score += COIN_VALUE;
-        // spawnCoinFx(c.spr.x, c.spr.y);
-        // floatText(c.spr.x, c.spr.y - 20, `+${COIN_VALUE}`);
+        spawnCoinFx(c.spr.x, c.spr.y);
+        floatText(c.spr.x, c.spr.y - 20, `+${COIN_VALUE}`);
         refreshScore();
       }
     }
@@ -1021,13 +1034,13 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     lives--;
     refreshLives();
     playHurt();
-    // spawnHitFx(pl.x, pl.y - 80);
+    spawnHitFx(pl.x, pl.y - 80);
     if (lives <= 0) {
       pl.dead = true;
       pl.vy = -8;
       pl.deathPhase = 0;
+      pl.deathTimer = 0;
       state = "dead";
-      setTimeout(showGameOver, 1800);
     } else {
       pl.invTimer = 95;
     }
@@ -1485,10 +1498,10 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
         p.g.visible = false;
       }
     // Reset float text pool
-    // for (const f of floatPool) {
-    //   f.active = false;
-    //   f.t.visible = false;
-    // }
+    for (const f of floatPool) {
+      f.active = false;
+      f.t.visible = false;
+    }
     floats = [];
     clearConfetti();
   }
@@ -1496,14 +1509,17 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   function startGame() {
     if (menuCont) {
       uiLayer.removeChild(menuCont);
+      menuCont.destroy({ children: true });
       menuCont = null;
     }
     if (goCont) {
       uiLayer.removeChild(goCont);
+      goCont.destroy({ children: true });
       goCont = null;
     }
     if (winCont) {
       uiLayer.removeChild(winCont);
+      winCont.destroy({ children: true });
       winCont = null;
     }
     clearAll();
@@ -1532,6 +1548,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     pl.sliding = false;
     pl.curRow = -1;
     pl.deathPhase = 0;
+    pl.deathTimer = 0;
 
     // Reset player animation in-place — no destroy/create
     playerAnim.loop = true;
@@ -1655,14 +1672,14 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
       const t = Math.min(1, winAnimTimer / 65);
       playerCont.scale.set(1 + Math.sin(t * Math.PI) * 0.06);
       updatePlayer(dt);
-      // updateParts(dt);
+      updateParts(dt);
       updateFloats(dt);
       refreshScore();
 
       if (winAnimTimer >= 65) {
         playerCont.scale.set(1);
         state = "dead";
-        setTimeout(showWin, 50);
+        showWin(); // no setTimeout — called directly
       }
       return;
     }
@@ -1697,12 +1714,12 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
         pl.deathPhase = 2;
         pl.curRow = -1;
         switchAnim(ROW_IDLE, 0.12);
-        // spawnDust(pl.x, CHAR_Y, 0xffd700, 18);
+        spawnDust(pl.x, CHAR_Y, 0xffd700, 18);
       }
     }
 
     // Spawns only while actively playing — stop well before finish so no mob blocks the gate
-    const SPAWN_STOP_DIST = WIN_DIST * 0.82; // stop spawns at 72% of run
+    const SPAWN_STOP_DIST = WIN_DIST * 0.87; // stop spawns at 72% of run
     if (state === "playing" && distance < SPAWN_STOP_DIST) {
       const interval = Math.max(52, 118 - Math.floor(distance / 35) * 3);
       obstTimer += dt;
@@ -1720,8 +1737,17 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     updatePlayer(dt);
     updateObs(dt);
     updateCoins(dt);
-    // updateParts(dt);
+    updateParts(dt);
     updateFloats(dt);
+
+    // Dead state — wait ~108 frames (~1.8s) then show gameover screen
+    if (state === "dead" && pl.dead && pl.deathPhase === 2) {
+      pl.deathTimer += dt;
+      if (pl.deathTimer >= 108) {
+        pl.deathTimer = 999; // prevent re-trigger
+        showGameOver();
+      }
+    }
 
     if (state === "playing" || state === "finishing") {
       checkCollisions();
