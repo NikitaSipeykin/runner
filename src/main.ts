@@ -158,7 +158,11 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
         }),
     );
   }
-
+  app.ticker.add(() => {
+    if (Math.random() < 0.02) {
+      console.log("FPS:", app.ticker.FPS.toFixed(1));
+    }
+  });
   // MonedaD.png: 80×16, 5 cols → frame 16×16
   const COIN_COLS = 5;
   const COIN_FW = 16;
@@ -487,11 +491,11 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
       pl.onGround = false;
       pl.jumps = 1;
       switchAnim(ROW_JUMP, 0.2);
-      spawnDust(pl.x, CHAR_Y, 0x7ec850, 7);
+      // spawnDust(pl.x, CHAR_Y, 0x7ec850, 7);
     } else if (pl.jumps === 1) {
       pl.vy = JUMP2_V;
       pl.jumps = 2;
-      spawnDust(pl.x, pl.y, 0xffd700, 10);
+      // spawnDust(pl.x, pl.y, 0xffd700, 10);
     }
   }
 
@@ -749,86 +753,86 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   const coinFxPool = makePartPool(0xffd700, 4, 16);
   const allPartPools = [dustPoolGold, dustPoolGreen, hitPool, coinFxPool];
 
-  function acquireFrom(pool: Part[]): Part | null {
-    for (const p of pool) if (!p.active) return p;
-    return null;
-  }
+  // function acquireFrom(pool: Part[]): Part | null {
+  //   for (const p of pool) if (!p.active) return p;
+  //   return null;
+  // }
 
-  function emitFrom(
-    pool: Part[],
-    x: number,
-    y: number,
-    vx: number,
-    vy: number,
-    life: number,
-  ) {
-    const p = acquireFrom(pool);
-    if (!p) return;
-    p.g.x = x;
-    p.g.y = y;
-    p.g.alpha = 1;
-    p.g.visible = true;
-    p.vx = vx;
-    p.vy = vy;
-    p.life = life;
-    p.max = life;
-    p.active = true;
-  }
+  // function emitFrom(
+  //   pool: Part[],
+  //   x: number,
+  //   y: number,
+  //   vx: number,
+  //   vy: number,
+  //   life: number,
+  // ) {
+  //   const p = acquireFrom(pool);
+  //   if (!p) return;
+  //   p.g.x = x;
+  //   p.g.y = y;
+  //   p.g.alpha = 1;
+  //   p.g.visible = true;
+  //   p.vx = vx;
+  //   p.vy = vy;
+  //   p.life = life;
+  //   p.max = life;
+  //   p.active = true;
+  // }
 
-  function spawnDust(x: number, y: number, color: number, n: number) {
-    const pool = color === 0x7ec850 ? dustPoolGreen : dustPoolGold;
-    for (let i = 0; i < n; i++)
-      emitFrom(
-        pool,
-        x + (Math.random() - 0.5) * 22,
-        y,
-        (Math.random() - 0.5) * 3.5,
-        -(Math.random() * 4 + 1),
-        22,
-      );
-  }
+  // function spawnDust(x: number, y: number, color: number, n: number) {
+  //   // const pool = color === 0x7ec850 ? dustPoolGreen : dustPoolGold;
+  //   // for (let i = 0; i < n; i++)
+  //   //   emitFrom(
+  //   //     pool,
+  //   //     x + (Math.random() - 0.5) * 22,
+  //   //     y,
+  //   //     (Math.random() - 0.5) * 3.5,
+  //   //     -(Math.random() * 4 + 1),
+  //   //     22,
+  //   //   );
+  // }
 
-  function spawnHitFx(x: number, y: number) {
-    for (let i = 0; i < 14; i++)
-      emitFrom(
-        hitPool,
-        x,
-        y,
-        (Math.random() - 0.5) * 7,
-        -(Math.random() * 5 + 1),
-        28,
-      );
-  }
+  // function spawnHitFx(x: number, y: number) {
+  //   // for (let i = 0; i < 14; i++)
+  //   //   emitFrom(
+  //   //     hitPool,
+  //   //     x,
+  //   //     y,
+  //   //     (Math.random() - 0.5) * 7,
+  //   //     -(Math.random() * 5 + 1),
+  //   //     28,
+  //   //   );
+  // }
 
-  function spawnCoinFx(x: number, y: number) {
-    for (let i = 0; i < 8; i++)
-      emitFrom(
-        coinFxPool,
-        x,
-        y,
-        (Math.random() - 0.5) * 5,
-        -(Math.random() * 4 + 2),
-        20,
-      );
-  }
+  // function spawnCoinFx(x: number, y: number) {
+  //   // for (let i = 0; i < 8; i++)
+  //   //   emitFrom(
+  //   //     coinFxPool,
+  //   //     x,
+  //   //     y,
+  //   //     (Math.random() - 0.5) * 5,
+  //   //     -(Math.random() * 4 + 2),
+  //   //     20,
+  //   //   );
+  // }
 
-  function updateParts(dt: number) {
-    for (const pool of allPartPools) {
-      for (const p of pool) {
-        if (!p.active) continue;
-        p.life -= dt;
-        if (p.life <= 0) {
-          p.active = false;
-          p.g.visible = false;
-          continue;
-        }
-        p.g.x += p.vx * dt;
-        p.g.y += p.vy * dt;
-        p.vy += 0.18 * dt;
-        p.g.alpha = Math.max(0, p.life / p.max);
-      }
-    }
-  }
+  // function updateParts(dt: number) {
+  //   // for (const pool of allPartPools) {
+  //   //   for (const p of pool) {
+  //   //     if (!p.active) continue;
+  //   //     p.life -= dt;
+  //   //     if (p.life <= 0) {
+  //   //       p.active = false;
+  //   //       p.g.visible = false;
+  //   //       continue;
+  //   //     }
+  //   //     p.g.x += p.vx * dt;
+  //   //     p.g.y += p.vy * dt;
+  //   //     p.vy += 0.18 * dt;
+  //   //     p.g.alpha = Math.max(0, p.life / p.max);
+  //   //   }
+  //   // }
+  // }
 
   // ── FLOAT TEXT POOL ───────────────────────────────────────
   interface FT {
@@ -838,49 +842,49 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     max: number;
     active: boolean;
   }
-  const FLOAT_POOL_SIZE = 8;
-  const floatPool: FT[] = Array.from({ length: FLOAT_POOL_SIZE }, () => {
-    const t = new Text({
-      text: "",
-      style: new TextStyle({
-        fontFamily: "Arial Black",
-        fontSize: 22,
-        fontWeight: "bold",
-        fill: "#FFD700",
-        stroke: { color: "#333", width: 3 },
-      }),
-    });
-    t.anchor.set(0.5);
-    t.visible = false;
-    uiLayer.addChild(t);
-    return { t, vy: 0, life: 0, max: 1, active: false };
-  });
+  // const FLOAT_POOL_SIZE = 8;
+  // const floatPool: FT[] = Array.from({ length: FLOAT_POOL_SIZE }, () => {
+  //   const t = new Text({
+  //     text: "",
+  //     style: new TextStyle({
+  //       fontFamily: "Arial Black",
+  //       fontSize: 22,
+  //       fontWeight: "bold",
+  //       fill: "#FFD700",
+  //       stroke: { color: "#333", width: 3 },
+  //     }),
+  //   });
+  //   t.anchor.set(0.5);
+  //   t.visible = false;
+  //   uiLayer.addChild(t);
+  //   return { t, vy: 0, life: 0, max: 1, active: false };
+  // });
   let floats: FT[] = [];
 
-  let floatPoolIdx = 0;
-  function floatText(x: number, y: number, txt: string, color = "#FFD700") {
-    let slot: FT | null = null;
-    for (let i = 0; i < FLOAT_POOL_SIZE; i++) {
-      const idx = (floatPoolIdx + i) % FLOAT_POOL_SIZE;
-      if (!floatPool[idx].active) {
-        slot = floatPool[idx];
-        floatPoolIdx = (idx + 1) % FLOAT_POOL_SIZE;
-        break;
-      }
-    }
-    if (!slot) return;
-    slot.t.text = txt;
-    (slot.t.style as TextStyle).fill = color;
-    slot.t.x = x;
-    slot.t.y = y;
-    slot.t.alpha = 1;
-    slot.t.visible = true;
-    slot.vy = -2.2;
-    slot.life = 38;
-    slot.max = 38;
-    slot.active = true;
-    floats.push(slot);
-  }
+  // let floatPoolIdx = 0;
+  // function floatText(x: number, y: number, txt: string, color = "#FFD700") {
+  //   let slot: FT | null = null;
+  //   for (let i = 0; i < FLOAT_POOL_SIZE; i++) {
+  //     const idx = (floatPoolIdx + i) % FLOAT_POOL_SIZE;
+  //     // if (!floatPool[idx].active) {
+  //     //   slot = floatPool[idx];
+  //     //   floatPoolIdx = (idx + 1) % FLOAT_POOL_SIZE;
+  //     //   break;
+  //     // }
+  //   }
+  //   if (!slot) return;
+  //   // slot.t.text = txt;
+  //   // (slot.t.style as TextStyle).fill = color;
+  //   // slot.t.x = x;
+  //   // slot.t.y = y;
+  //   // slot.t.alpha = 1;
+  //   // slot.t.visible = true;
+  //   // slot.vy = -2.2;
+  //   // slot.life = 38;
+  //   // slot.max = 38;
+  //   // slot.active = true;
+  //   // floats.push(slot);
+  // }
 
   function updateFloats(dt: number) {
     for (const f of floats) {
@@ -1006,8 +1010,8 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
         c.active = false;
         c.spr.visible = false;
         score += COIN_VALUE;
-        spawnCoinFx(c.spr.x, c.spr.y);
-        floatText(c.spr.x, c.spr.y - 20, `+${COIN_VALUE}`);
+        // spawnCoinFx(c.spr.x, c.spr.y);
+        // floatText(c.spr.x, c.spr.y - 20, `+${COIN_VALUE}`);
         refreshScore();
       }
     }
@@ -1017,7 +1021,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     lives--;
     refreshLives();
     playHurt();
-    spawnHitFx(pl.x, pl.y - 80);
+    // spawnHitFx(pl.x, pl.y - 80);
     if (lives <= 0) {
       pl.dead = true;
       pl.vy = -8;
@@ -1481,10 +1485,10 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
         p.g.visible = false;
       }
     // Reset float text pool
-    for (const f of floatPool) {
-      f.active = false;
-      f.t.visible = false;
-    }
+    // for (const f of floatPool) {
+    //   f.active = false;
+    //   f.t.visible = false;
+    // }
     floats = [];
     clearConfetti();
   }
@@ -1651,7 +1655,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
       const t = Math.min(1, winAnimTimer / 65);
       playerCont.scale.set(1 + Math.sin(t * Math.PI) * 0.06);
       updatePlayer(dt);
-      updateParts(dt);
+      // updateParts(dt);
       updateFloats(dt);
       refreshScore();
 
@@ -1693,7 +1697,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
         pl.deathPhase = 2;
         pl.curRow = -1;
         switchAnim(ROW_IDLE, 0.12);
-        spawnDust(pl.x, CHAR_Y, 0xffd700, 18);
+        // spawnDust(pl.x, CHAR_Y, 0xffd700, 18);
       }
     }
 
@@ -1716,7 +1720,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     updatePlayer(dt);
     updateObs(dt);
     updateCoins(dt);
-    updateParts(dt);
+    // updateParts(dt);
     updateFloats(dt);
 
     if (state === "playing" || state === "finishing") {
