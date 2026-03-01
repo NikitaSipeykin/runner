@@ -2,6 +2,7 @@ import {
   Application,
   Assets,
   Sprite,
+  TilingSprite,
   AnimatedSprite,
   Texture,
   Rectangle,
@@ -51,7 +52,7 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
 
   // ── CHARACTER ─────────────────────────────────────────────
   const CHAR_FW = 56;
-  const CHAR_FH = 57;
+  const CHAR_FH = 56;
   const CHAR_COLS = 8;
   const CHAR_SCALE = 2.75;
   const ROW_IDLE = 0;
@@ -106,6 +107,9 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     return cachedVRight;
   }
 
+  // Forward declaration — resizeBgSprites is defined after TilingSprites are created
+  let resizeBgSprites: () => void = () => {};
+
   function resize() {
     const vw = Math.max(1, window.innerWidth);
     const vh = Math.max(1, window.innerHeight);
@@ -113,11 +117,13 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
     app.renderer.resize(vw, vh);
     app.stage.hitArea = app.screen;
 
-    const scale = Math.min(vw / W, vh / H);
+    // Scale by height — fills full screen height, no side bars ever
+    const scale = vh / H;
     root.scale.set(scale);
     root.x = Math.round((vw - W * scale) / 2);
-    root.y = Math.round((vh - H * scale) / 2);
+    root.y = 0;
     updateVisibleBounds();
+    resizeBgSprites();
   }
 
   resize();
@@ -230,52 +236,55 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
   root.addChild(bgLayer, gameLayer, fxLayer, uiLayer);
 
   // ═══════════════════════════════════════════════════════════
-  // PARALLAX BACKGROUND — 3 layers (320×180), scaled to design height H
+  // PARALLAX BACKGROUND — 3 TilingSprites, one per layer
   // ═══════════════════════════════════════════════════════════
   const BG_SCALE = H / 180; // 844/180 ≈ 4.69
-  const BG_W = Math.round(320 * BG_SCALE); // ~1502px
-
-  // Spawn 6 tiles starting 1 tile left of origin — covers any viewport width
-  const NUM_BG_SPRITES = 6;
-  const BG_START_X = -BG_W; // start one tile to the left so wide screens are covered
 
   interface BgLayer {
-    sprites: Sprite[];
+    spr: TilingSprite;
     spd: number;
   }
   const bgLayers: BgLayer[] = [];
 
   for (const cfg of BG_LAYERS) {
-    const sprites: Sprite[] = [];
-    for (let i = 0; i < NUM_BG_SPRITES; i++) {
-      const s = new Sprite(T[cfg.key]);
-      s.scale.set(BG_SCALE);
-      // Overdraw by 2px top and bottom to prevent gap artifacts
-      s.y = -2;
-      s.height = H + 4;
-      s.x = BG_START_X + i * BG_W;
-      bgLayer.addChild(s);
-      sprites.push(s);
-    }
-    bgLayers.push({ sprites, spd: cfg.spd });
+    const tex = T[cfg.key];
+    const spr = new TilingSprite({
+      texture: tex,
+      width: W,
+      height: H + 4,
+    });
+    spr.tileScale.set(BG_SCALE);
+    spr.y = -2;
+    bgLayer.addChild(spr);
+    bgLayers.push({ spr, spd: cfg.spd });
   }
 
-  // ── FLOOR TILES (floor.png — horizontally seamless) ─────────────────────
+  // ── FLOOR TILE (floor.png — single TilingSprite, seamless scroll) ──────
   const floorTex = T["floor"];
   const FLOOR_SCALE = GRASS_H / floorTex.height; // fit height to ground strip
-  const FLOOR_TILE_W = Math.ceil(floorTex.width * FLOOR_SCALE);
-  // Spawn 16 tiles: start 3 tiles to the left so wide screens + left edge are covered
-  const NUM_FLOOR_TILES = 16;
-  const FLOOR_START_X = -3 * FLOOR_TILE_W;
-  const floorTiles: Sprite[] = [];
-  for (let i = 0; i < NUM_FLOOR_TILES; i++) {
-    const s = new Sprite(floorTex);
-    s.scale.set(FLOOR_SCALE);
-    s.x = FLOOR_START_X + i * FLOOR_TILE_W;
-    s.y = GRASS_Y;
-    bgLayer.addChild(s);
-    floorTiles.push(s);
-  }
+  const floorTile = new TilingSprite({
+    texture: floorTex,
+    width: W,
+    height: GRASS_H,
+  });
+  floorTile.tileScale.set(FLOOR_SCALE);
+  floorTile.y = GRASS_Y;
+  bgLayer.addChild(floorTile);
+  let floorScrollX = 0;
+
+  // Stretches all TilingSprites to cover the full visible design width (handles wide screens)
+  resizeBgSprites = () => {
+    const x = cachedVLeft;
+    const w = cachedVRight - cachedVLeft;
+    for (let i = 0; i < bgLayers.length; i++) {
+      bgLayers[i].spr.x = x;
+      bgLayers[i].spr.width = w;
+    }
+    floorTile.x = x;
+    floorTile.width = w;
+  };
+  // Apply correct dimensions immediately now that sprites exist
+  resizeBgSprites();
 
   // Ad banner — centered, max 1.5× native height, sides cropped if viewport is narrower
   const nativeAdW = T["adfooter"].width;
@@ -1684,21 +1693,14 @@ ERROR: ${e.message} (${e.filename}:${e.lineno})
       return;
     }
 
-    // Parallax background — wrap when tile fully exits visible design area
-    const vLeft = visibleDesignLeft();
-    for (const layer of bgLayers) {
-      for (const s of layer.sprites) {
-        s.x -= layer.spd * dt;
-        if (s.x + BG_W <= vLeft) s.x += NUM_BG_SPRITES * BG_W;
-      }
+    // Parallax background — shift tilePosition, zero allocations, zero wrapping
+    for (let i = 0; i < bgLayers.length; i++) {
+      bgLayers[i].spr.tilePosition.x -= bgLayers[i].spd * dt;
     }
 
-    // Floor tiles scroll at game speed
-    for (const tile of floorTiles) {
-      tile.x -= speed * dt;
-      if (tile.x + FLOOR_TILE_W <= vLeft)
-        tile.x += NUM_FLOOR_TILES * FLOOR_TILE_W;
-    }
+    // Floor scrolls at game speed
+    floorScrollX -= speed * dt;
+    floorTile.tilePosition.x = floorScrollX;
 
     // Finish line: must be visually crossed before victory triggers
     if (!finishCrossed && (state === "playing" || state === "finishing")) {
